@@ -190,3 +190,7 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 .empty { text-align: center; color: var(--muted); padding: 30px 0; }
 .sutra-text.mantra { counter-reset: ju; }
 .sutra-text.mantra p::before { counter-increment: ju; content: counter(ju) "　"; color: var(--muted); font-size: .7em; display: inline-block; min-width: 2.2em; }
+.voice { margin-top: 4px; }
+.voice #vmode { margin-top: 8px; }
+.voice #vmode .chip { min-height: 32px; padding: 4px 12px; font-size: .8rem; }
+#interim { min-height: 1.4em; margin-top: 6px; }

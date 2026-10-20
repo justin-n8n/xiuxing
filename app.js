@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）第一段：念經、佛號、打坐、文字日記、首頁、迴向、離線、備份 */
 'use strict';
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 
 /* ---------- 預設內容 ---------- */
 const BUILTIN_SUTRAS = [
@@ -19,6 +19,7 @@ const FOUR_ITS = ['面對它', '接受它', '處理它', '放下它'];
 const SIT_METHODS = ['數息', '默照', '念佛', '其他'];
 const DEFAULT_DEDICATION = '願以此功德　莊嚴佛淨土\n上報四重恩　下濟三途苦\n若有見聞者　悉發菩提心\n盡此一報身　同生極樂國';
 const BEADS = 108;
+const VOICE_MODES = [['both', '錄音＋轉文字'], ['text', '只轉文字'], ['audio', '只錄音']];
 
 /* ---------- 小工具 ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -76,6 +77,90 @@ const dbDel = (store, id) => req(store, 'readwrite', s => s.delete(id));
 const kvGet = async (k, dflt) => { const r = await req('kv', 'readonly', s => s.get(k)); return r ? r.v : dflt; };
 const kvSet = (k, v) => dbPut('kv', { k, v });
 const kvDel = k => dbDel('kv', k);
+
+/* ---------- 雲端同步（第二段）：存檔時記進待同步清單，有網路就送到 Apps Script ---------- */
+const emptyQueue = () => ({ logs: [], diary: [], deletes: [], audio: [] });
+let qChain = Promise.resolve();
+function withQueue(fn) { // 待同步清單的讀寫排隊進行，避免互相蓋掉
+  const run = qChain.then(async () => { const q = Object.assign(emptyQueue(), await kvGet('syncQueue', {})); const r = await fn(q); await kvSet('syncQueue', q); return r; });
+  qChain = run.catch(() => {});
+  return run;
+}
+/** 新增或修改一筆紀錄（logs／diary），並排進待同步 */
+async function saveRec(store, obj, touch = true) {
+  if (touch) obj.updatedAt = new Date().toISOString();
+  await dbPut(store, obj);
+  await withQueue(q => {
+    if (!q[store].includes(obj.id)) q[store].push(obj.id);
+    if (store === 'diary' && obj.audio && !obj.audioFileId && !q.audio.includes(obj.id)) q.audio.push(obj.id);
+  });
+  scheduleSync();
+}
+async function delRec(store, id) {
+  await dbDel(store, id);
+  await withQueue(q => {
+    q[store] = q[store].filter(x => x !== id); q.audio = q.audio.filter(x => x !== id);
+    q.deletes.push(store + ':' + id);
+  });
+  scheduleSync();
+}
+let syncTimer = null, syncing = false;
+function scheduleSync() { clearTimeout(syncTimer); syncTimer = setTimeout(() => syncNow(false), 1500); }
+const getRec = (store, id) => req(store, 'readonly', s => s.get(id));
+const stripAudio = ({ audio, ...rest }) => ({ ...rest, hasAudio: !!(audio || rest.audioFileId) });
+const blobToB64 = blob => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); });
+
+async function syncPost(cfg, payload) {
+  const r = await fetch(cfg.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...payload, pass: cfg.pass }) });
+  const j = await r.json().catch(() => ({ ok: false, error: '回應看不懂（HTTP ' + r.status + '）' }));
+  if (!j.ok) throw new Error(j.error || '同步失敗');
+  return j;
+}
+async function syncNow(manual) {
+  const cfg = await kvGet('sync', {});
+  if (!cfg.url || !cfg.pass) { if (manual) toast('還沒設定雲端同步（⚙ 設定 → 雲端同步）'); return false; }
+  if (!navigator.onLine) { if (manual) toast('沒有網路，有網路時會自動同步'); return false; }
+  if (syncing) return false;
+  syncing = true;
+  try {
+    const q = Object.assign(emptyQueue(), await kvGet('syncQueue', {}));
+    const logs = (await Promise.all(q.logs.map(id => getRec('logs', id)))).filter(Boolean);
+    const diary = (await Promise.all(q.diary.map(id => getRec('diary', id)))).filter(Boolean).map(stripAudio);
+    const dels = [...q.deletes];
+    for (let i = 0; i < Math.max(logs.length, diary.length, dels.length); i += 100) {
+      await syncPost(cfg, { action: 'push', logs: logs.slice(i, i + 100), diary: diary.slice(i, i + 100), deletes: dels.slice(i, i + 100) });
+    }
+    await withQueue(q2 => { // 只拿掉這次送出的，同步途中新增的留著下次送
+      q2.logs = q2.logs.filter(id => !q.logs.includes(id));
+      q2.diary = q2.diary.filter(id => !q.diary.includes(id));
+      q2.deletes = q2.deletes.filter(d => !dels.includes(d));
+    });
+    for (const id of q.audio) {
+      const rec = await getRec('diary', id);
+      if (rec?.audio) {
+        const res = await syncPost(cfg, { action: 'audio', id, mime: rec.audio.type || 'audio/webm', data: await blobToB64(rec.audio) });
+        const cur = await getRec('diary', id);
+        if (cur?.audio) { cur.audioFileId = res.fileId; await dbPut('diary', cur); }
+      }
+      await withQueue(q2 => { q2.audio = q2.audio.filter(x => x !== id); });
+    }
+    cfg.lastAt = new Date().toISOString(); cfg.lastError = '';
+    await kvSet('sync', cfg);
+    if (manual) toast(`已同步：紀錄 ${logs.length}、日記 ${diary.length}、錄音 ${q.audio.length}`);
+    return true;
+  } catch (err) {
+    cfg.lastError = err.message; await kvSet('sync', cfg);
+    if (manual) toast('同步失敗：' + err.message);
+    return false;
+  } finally {
+    syncing = false;
+    if (location.hash === '#settings') renderSyncStatus();
+  }
+}
+async function pendingCount() {
+  const q = Object.assign(emptyQueue(), await kvGet('syncQueue', {}));
+  return q.logs.length + q.diary.length + q.deletes.length + q.audio.length;
+}
 
 /* ---------- 設定 ---------- */
 let settings = null;
@@ -143,6 +228,7 @@ function askNumber(title, value, unit) {
 
 /* 螢幕常亮（計數、打坐時） */
 let wakeLock = null;
+let pageCleanup = null; // 離開頁面時要做的事（例如停止錄音）
 async function keepAwake(on) {
   try {
     if (on && 'wakeLock' in navigator && !wakeLock) {
@@ -184,6 +270,7 @@ const routes = {
 async function route() {
   const [name, ...rest] = (location.hash.slice(1) || 'home').split('/');
   const fn = routes[name] || renderHome;
+  if (pageCleanup) { try { pageCleanup(); } catch (_) { /* 忽略 */ } pageCleanup = null; }
   document.body.classList.remove('immersive');
   closeModal();
   setTab(routes[name] ? name : 'home');
@@ -242,7 +329,15 @@ async function renderHome() {
       <h2>修行日曆（點一天看紀錄）</h2>
       <div class="heat" id="heat"></div>
       <div id="dayDetail" class="small" style="margin-top:10px"></div>
-    </div>`;
+    </div>
+    <p class="small muted" id="homeSync" style="text-align:center"></p>`;
+  kvGet('sync', {}).then(async cfg => {
+    const el = $('#homeSync'); if (!el) return;
+    const n = await pendingCount();
+    el.textContent = !cfg.url ? '☁️ 雲端同步尚未設定（⚙ 設定）'
+      : cfg.lastError ? `⚠️ 同步失敗：${cfg.lastError}（待同步 ${n} 筆）`
+      : `☁️ ${cfg.lastAt ? '上次同步 ' + fmtTime(cfg.lastAt) : '還沒同步過'}${n ? `・待同步 ${n} 筆` : ''}`;
+  });
 
   // 熱度圖：直欄是一週（日→六），週數依螢幕寬度（平板會多顯示幾週）
   const heat = $('#heat');
@@ -341,7 +436,7 @@ async function renderSutraReader(id) {
       const n = parseInt($('#cnt').value, 10);
       if (!(n > 0)) { toast('請輸入遍數'); return; }
       if (!await dedicate(`${s.name} ${n} ${s.unit}`)) return;
-      await dbPut('logs', { id: uid(), type: 'sutra', itemId: s.id, name: s.name, unit: s.unit, count: n, dedicated: true, at: new Date().toISOString() });
+      await saveRec('logs', { id: uid(), type: 'sutra', itemId: s.id, name: s.name, unit: s.unit, count: n, dedicated: true, at: new Date().toISOString() });
       toast(`已記錄：${s.name} ${n} ${s.unit} 🙏`);
       $('#cnt').value = 1;
     }
@@ -409,7 +504,7 @@ async function renderCounter(id) {
     if (a === 'done') {
       if (!n) { toast('還沒有計數'); return; }
       if (!await dedicate(`${c.name} ${fmtNum(n)} ${c.unit}`)) return;
-      await dbPut('logs', { id: uid(), type: 'chant', itemId: c.id, name: c.name, unit: c.unit, count: n, dedicated: true, at: new Date().toISOString() });
+      await saveRec('logs', { id: uid(), type: 'chant', itemId: c.id, name: c.name, unit: c.unit, count: n, dedicated: true, at: new Date().toISOString() });
       await kvDel('chant:' + c.id);
       toast(`已記錄：${c.name} ${fmtNum(n)} ${c.unit} 🙏`);
       leave();
@@ -517,7 +612,7 @@ function renderSitting(r) {
     const minutes = Math.round(sec / 60 * 10) / 10;
     const info = await sitForm(minutes);
     if (info && await dedicate(`打坐 ${fmtMinutes(minutes)}`)) {
-      await dbPut('logs', { id: uid(), type: 'sit', itemId: 'sit', name: '打坐', unit: '分', minutes, seconds: Math.round(sec), mode: r.mode, method: info.method, note: info.note, dedicated: true, at: new Date(r.start).toISOString() });
+      await saveRec('logs', { id: uid(), type: 'sit', itemId: 'sit', name: '打坐', unit: '分', minutes, seconds: Math.round(sec), mode: r.mode, method: info.method, note: info.note, dedicated: true, at: new Date(r.start).toISOString() });
       toast(`已記錄：打坐 ${fmtMinutes(minutes)} 🙏`);
     } else {
       toast('這次沒有記錄');
@@ -561,19 +656,23 @@ async function renderDiary(action, id) {
   list.forEach(r => (groups[dayKey(r.at)] ||= []).push(r));
   view.innerHTML = `
     <button class="btn primary big" onclick="location.hash='diary/new'">＋ 寫日記</button>
-    <p class="small muted">用說的（錄音＋轉文字）會在第二段加入。</p>
+    <p class="small muted">寫日記時可以按 🎤 用說的：錄音＋轉成文字。</p>
     ${list.length ? Object.entries(groups).map(([k, rs]) => `
       <div class="day-head">${fmtDay(k)}・${rs.length} 篇${settings.startDate && k < settings.startDate ? '（測試期間）' : ''}</div>
       ${rs.map(r => `<div class="card">
-        <div class="entry">${esc(r.text)}</div>
+        ${r.text ? `<div class="entry">${esc(r.text)}</div>` : ''}
+        ${r.audio ? `<audio controls preload="none" data-blob="${r.id}" style="width:100%;margin-top:6px"></audio>` : r.audioFileId ? '<div class="small muted">🎧 錄音存在雲端硬碟</div>' : ''}
         <div style="margin-top:6px">${(r.moods || []).map(m => `<span class="tag">${esc(m)}</span>`).join('')}${r.fourIt ? `<span class="tag">🪷 ${esc(r.fourIt)}</span>` : ''}</div>
         <div class="entry-meta"><span>${fmtTime(r.at)}・${r.share ? '🤝 給小輝看' : '🔒 只有自己'}</span>
           <span><button class="link-btn" data-edit="${r.id}">編輯</button><button class="link-btn" data-del="${r.id}">刪除</button></span></div>
       </div>`).join('')}`).join('') : '<div class="empty">還沒有日記</div>'}`;
+  const urls = [];
+  $$('audio[data-blob]').forEach(a => { const rec = list.find(x => x.id === a.dataset.blob); if (rec?.audio) { const u = URL.createObjectURL(rec.audio); urls.push(u); a.src = u; } });
+  pageCleanup = () => urls.forEach(u => URL.revokeObjectURL(u));
   view.onclick = async e => {
     const ed = e.target.closest('[data-edit]'); if (ed) { location.hash = `diary/edit/${ed.dataset.edit}`; return; }
     const del = e.target.closest('[data-del]');
-    if (del && confirm('確定刪除這篇日記？刪了就找不回來（除非有匯出備份）。')) { await dbDel('diary', del.dataset.del); renderDiary(); toast('已刪除'); }
+    if (del && confirm('確定刪除這篇日記？刪了就找不回來（除非有匯出備份）。')) { await delRec('diary', del.dataset.del); renderDiary(); toast('已刪除'); }
   };
 }
 
@@ -583,28 +682,126 @@ async function renderDiaryForm(id) {
   const r = old ? { ...old, moods: [...(old.moods || [])] } : { id: uid(), text: '', moods: [], fourIt: '', share: false, at: new Date().toISOString() };
   setTitle(old ? '編輯日記' : '寫日記');
   const draft = !old ? await kvGet('diaryDraft', '') : '';
+  let vmode = await kvGet('voiceMode', 'both');
   view.innerHTML = `
     <div class="card">
-      <label class="field"><span>${old ? fmtDay(dayKey(r.at)) + ' ' + fmtTime(r.at) : '今天的心情'}</span><textarea id="txt" placeholder="今天發生了什麼？心裡有什麼感受？">${esc(old ? r.text : draft)}</textarea></label>
-      <p class="small muted" style="margin:0 0 6px">心情（可複選）</p>
+      <label class="field"><span>${old ? fmtDay(dayKey(r.at)) + ' ' + fmtTime(r.at) : '今天的心情'}</span><textarea id="txt" placeholder="今天發生了什麼？心裡有什麼感受？（也可以按下面的 🎤 用說的）">${esc(old ? r.text : draft)}</textarea></label>
+      <div class="voice">
+        <button class="btn" id="micBtn">🎤 用說的</button>
+        <div class="chips small" id="vmode">${VOICE_MODES.map(([v, l]) => `<button class="chip ${vmode === v ? 'on' : ''}" data-vmode="${v}">${l}</button>`).join('')}</div>
+        <div id="interim" class="small muted"></div>
+        <div id="audioBox" class="small"></div>
+      </div>
+      <p class="small muted" style="margin:14px 0 6px">心情（可複選）</p>
       <div class="chips" id="moods">${moodList().map(m => `<button class="chip ${r.moods.includes(m) ? 'on' : ''}" data-mood="${esc(m)}">${esc(m)}</button>`).join('')}</div>
       <p class="small muted" style="margin:14px 0 6px">四它：這件事我正在…</p>
       <div class="chips" id="four">${FOUR_ITS.map(f => `<button class="chip ${r.fourIt === f ? 'on' : ''}" data-four="${f}">${f}</button>`).join('')}</div>
-      <label class="switch" style="margin-top:12px"><input type="checkbox" id="share" ${r.share ? 'checked' : ''}> 給小輝看（每週摘要會帶入這篇）</label>
+      <label class="switch" style="margin-top:12px"><input type="checkbox" id="share" ${r.share ? 'checked' : ''}> 給小輝看</label>
+      <p class="small muted" style="margin:0">勾了以後，這篇的文字會寫進每週的「修行週摘要」，放在 34 專案資料夾（公司筆電也看得到）。錄音不會放進去。</p>
     </div>
-    <div class="row"><button class="btn" onclick="history.back()">取消</button><button class="btn primary grow" id="save">儲存</button></div>`;
+    <div class="row"><button class="btn" data-a="cancel">取消</button><button class="btn primary grow" id="save">儲存</button></div>`;
   const txt = $('#txt');
-  if (!old) txt.oninput = () => kvSet('diaryDraft', txt.value);
+  const saveDraft = () => { if (!old) kvSet('diaryDraft', txt.value); };
+  txt.oninput = saveDraft;
+
+  // ---- 語音：錄音（MediaRecorder）＋轉文字（Web Speech API） ----
+  let audioBlob = r.audio || null, audioChanged = false, objUrl = null;
+  let recorder = null, stream = null, recog = null, recording = false, recogFailed = false;
+  const showAudio = () => {
+    if (objUrl) URL.revokeObjectURL(objUrl);
+    objUrl = audioBlob ? URL.createObjectURL(audioBlob) : null;
+    $('#audioBox').innerHTML = audioBlob
+      ? `<audio controls src="${objUrl}" style="width:100%;margin-top:8px"></audio><button class="link-btn" data-a="rmAudio">刪除這段錄音</button>`
+      : r.audioFileId ? '🎧 這篇的錄音存在雲端硬碟（這支手機沒有副本）' : '';
+  };
+  const setMicUi = () => {
+    const b = $('#micBtn'); if (!b) return;
+    b.textContent = recording ? '⏹ 說完了' : '🎤 用說的';
+    b.classList.toggle('primary', recording);
+  };
+  const note = msg => { const el = $('#interim'); if (el) el.textContent = msg; };
+  const appendText = t => {
+    t = t.trim(); if (!t) return;
+    const v = txt.value;
+    const sep = !v || /[\s，。！？、；：,.!?]$/.test(v) ? '' : '，';
+    txt.value = v + sep + t; saveDraft();
+  };
+  const startRecog = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { note(vmode === 'text' ? '這支手機不支援語音轉文字' : '這支手機不支援語音轉文字，這次只錄音'); return; }
+    recogFailed = false;
+    recog = new SR(); recog.lang = 'zh-TW'; recog.continuous = true; recog.interimResults = true;
+    recog.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) appendText(t); else interim += t;
+      }
+      note(interim ? '…' + interim : '');
+    };
+    recog.onerror = e => {
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      recogFailed = true;
+      note({ network: '沒有網路，無法轉文字（錄音照常）', 'not-allowed': '沒有麥克風權限', 'service-not-allowed': '這支手機不允許語音轉文字',
+        'audio-capture': '麥克風被錄音佔用，無法同時轉文字。可以把模式改成「只轉文字」或「只錄音」' }[e.error] || '轉文字發生問題：' + e.error);
+    };
+    recog.onend = () => { if (recording && !recogFailed) { try { recog.start(); } catch (_) { /* 已在跑 */ } } };
+    try { recog.start(); } catch (e) { note('轉文字無法開始：' + e.message); }
+  };
+  const startVoice = async () => {
+    if (vmode !== 'text' && audioBlob && !confirm('要重錄嗎？原本的錄音會被取代。')) return;
+    if (vmode !== 'text') {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(t => window.MediaRecorder?.isTypeSupported?.(t));
+        recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        const chunks = [];
+        recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+        recorder.onstop = () => {
+          audioBlob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }); audioChanged = true;
+          stream.getTracks().forEach(t => t.stop()); stream = null; showAudio();
+        };
+        recorder.start(1000);
+      } catch (e) { toast('無法使用麥克風：' + (e.message || e.name)); return; }
+    }
+    recording = true; setMicUi(); note('請說…');
+    if (vmode !== 'audio') startRecog();
+    keepAwake(true);
+  };
+  const stopVoice = () => {
+    if (!recording) return;
+    recording = false;
+    try { recog?.stop(); } catch (_) { /* 已停 */ }
+    recog = null;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    recorder = null; setMicUi(); keepAwake(false);
+    setTimeout(() => { if (!recording && !recogFailed) note(''); }, 1500);
+  };
+  pageCleanup = () => { stopVoice(); if (objUrl) URL.revokeObjectURL(objUrl); };
+  showAudio();
+
   view.onclick = async e => {
+    if (e.target.id === 'micBtn') { recording ? stopVoice() : startVoice(); return; }
+    const vm = e.target.closest('[data-vmode]');
+    if (vm) {
+      if (recording) { toast('先按「說完了」再換模式'); return; }
+      vmode = vm.dataset.vmode; kvSet('voiceMode', vmode);
+      $$('#vmode .chip').forEach(b => b.classList.toggle('on', b.dataset.vmode === vmode)); return;
+    }
     const m = e.target.closest('[data-mood]');
     if (m) { const v = m.dataset.mood; r.moods = r.moods.includes(v) ? r.moods.filter(x => x !== v) : [...r.moods, v]; m.classList.toggle('on'); return; }
     const f = e.target.closest('[data-four]');
     if (f) { r.fourIt = r.fourIt === f.dataset.four ? '' : f.dataset.four; $$('#four .chip').forEach(b => b.classList.toggle('on', b.dataset.four === r.fourIt)); return; }
+    const a = e.target.closest('[data-a]')?.dataset.a;
+    if (a === 'rmAudio' && confirm('刪除這段錄音？')) { audioBlob = null; audioChanged = true; showAudio(); return; }
+    if (a === 'cancel') { stopVoice(); history.back(); return; }
     if (e.target.id === 'save') {
+      stopVoice();
+      await new Promise(res => setTimeout(res, 300)); // 等錄音收尾
       r.text = txt.value.trim(); r.share = $('#share').checked;
-      if (!r.text) { toast('還沒有寫內容'); return; }
-      if (old) r.updatedAt = new Date().toISOString();
-      await dbPut('diary', r);
+      if (!r.text && !audioBlob) { toast('還沒有寫內容或錄音'); return; }
+      if (audioChanged) { r.audio = audioBlob; r.audioFileId = ''; }
+      await saveRec('diary', r);
       if (!old) await kvDel('diaryDraft');
       toast('日記已儲存'); location.hash = 'diary';
     }
@@ -648,8 +845,16 @@ async function renderSettings() {
       <div class="chips" id="theme">${[['auto', '跟手機'], ['light', '淺色'], ['dark', '深色']].map(([v, l]) => `<button class="chip ${theme === v ? 'on' : ''}" data-theme="${v}">${l}</button>`).join('')}</div>
     </div>
     <div class="card">
+      <h2>雲端同步（存到你的 Google 雲端硬碟）</h2>
+      <p class="small muted" style="margin-top:0">照 34 專案的「雲端同步_設定步驟」部署 Apps Script 後，把網址和你自己設定的密語填在這裡。每次存檔都會自動同步，沒網路時等有網路再送。</p>
+      <label class="field"><span>Apps Script 網址</span><input type="text" id="syncUrl" inputmode="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec"></label>
+      <label class="field"><span>密語（和 Apps Script 裡設定的一樣）</span><input type="password" id="syncPass" autocomplete="off"></label>
+      <div class="row"><button class="btn primary" id="syncSave">儲存並測試</button><button class="btn" id="syncNowBtn">立即同步</button><button class="btn" id="syncPull">從雲端還原</button></div>
+      <div id="syncStatus" class="small" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
       <h2>備份</h2>
-      <p class="small muted" style="margin-top:0">資料只存在這支手機（雲端同步在第二段加入）。建議每週匯出一次，存到雲端硬碟的私人資料夾。</p>
+      <p class="small muted" style="margin-top:0">還沒開雲端同步前，資料只存在這支手機，建議每週匯出一次，存到雲端硬碟的私人資料夾（不要放進專案資料夾）。備份檔不含錄音。</p>
       <div class="row"><button class="btn primary" id="export">匯出備份</button><label class="btn" style="display:inline-flex;align-items:center">匯入備份<input type="file" id="import" accept="application/json,.json" hidden></label></div>
     </div>
     <p class="small muted">修行紀錄 v${APP_VERSION}・34.修行紀錄App。經文來源：CBETA 中華電子佛典協會（CC BY-NC-SA 3.0 TW）。</p>`;
@@ -681,8 +886,66 @@ async function renderSettings() {
     const th = e.target.closest('[data-theme]')?.dataset.theme;
     if (th) { localStorage.setItem('theme', th); applyTheme(); renderSettings(); }
     if (e.target.id === 'export') exportData();
+    if (e.target.id === 'syncSave') {
+      const cfg = await kvGet('sync', {});
+      const url = $('#syncUrl').value.trim(), pass = $('#syncPass').value;
+      if (url && !/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) { toast('網址要是 https://script.google.com/…/exec'); return; }
+      Object.assign(cfg, { url, pass: pass || cfg.pass || '' });
+      if (!url) { cfg.pass = ''; await kvSet('sync', cfg); toast('已關閉雲端同步'); renderSyncStatus(); return; }
+      await kvSet('sync', cfg); $('#syncPass').value = '';
+      try { const j = await syncPost(cfg, { action: 'ping' }); toast('連線成功：' + (j.message || 'ok')); await enqueueAll(); syncNow(true); }
+      catch (err) { toast('連線失敗：' + err.message); }
+      renderSyncStatus();
+    }
+    if (e.target.id === 'syncNowBtn') { await syncNow(true); renderSyncStatus(); }
+    if (e.target.id === 'syncPull') pullFromCloud();
   };
   $('#import').onchange = e => importData(e.target.files[0]);
+  const cfg = await kvGet('sync', {});
+  $('#syncUrl').value = cfg.url || '';
+  $('#syncPass').placeholder = cfg.pass ? '（已設定，不用重填）' : '';
+  renderSyncStatus();
+}
+
+async function renderSyncStatus() {
+  const el = $('#syncStatus'); if (!el) return;
+  const cfg = await kvGet('sync', {}), n = await pendingCount();
+  el.innerHTML = !cfg.url ? '<span class="muted">尚未設定</span>'
+    : `${cfg.lastAt ? `上次同步：${fmtDay(dayKey(cfg.lastAt))} ${fmtTime(cfg.lastAt)}` : '還沒同步過'}・待同步 ${n} 筆`
+      + (cfg.lastError ? `<br><span style="color:#b2463a">上次失敗：${esc(cfg.lastError)}</span>` : '');
+}
+
+/** 第一次接上雲端時，把手機上已有的紀錄全部排進待同步 */
+async function enqueueAll() {
+  const [logs, diary] = await Promise.all([dbAll('logs'), dbAll('diary')]);
+  await withQueue(q => {
+    logs.forEach(l => { if (!q.logs.includes(l.id)) q.logs.push(l.id); });
+    diary.forEach(d => {
+      if (!q.diary.includes(d.id)) q.diary.push(d.id);
+      if (d.audio && !d.audioFileId && !q.audio.includes(d.id)) q.audio.push(d.id);
+    });
+  });
+}
+
+/** 從雲端還原：換手機或清掉資料時用；同一筆以比較新的為準，錄音留在雲端硬碟 */
+async function pullFromCloud() {
+  const cfg = await kvGet('sync', {});
+  if (!cfg.url) { toast('還沒設定雲端同步'); return; }
+  if (!confirm('從雲端硬碟把紀錄與日記抓回這支手機？\n同一筆以比較新的為準，這支手機上較新的不會被蓋掉。')) return;
+  try {
+    const j = await syncPost(cfg, { action: 'pull' });
+    let n = 0;
+    for (const [store, rows] of [['logs', j.logs || []], ['diary', j.diary || []]]) {
+      for (const rec of rows) {
+        const cur = await getRec(store, rec.id);
+        if (!cur || (rec.updatedAt || rec.at) > (cur.updatedAt || cur.at)) {
+          delete rec.hasAudio; if (cur?.audio) rec.audio = cur.audio;
+          await dbPut(store, rec); n++;
+        }
+      }
+    }
+    toast(`還原完成：更新 ${n} 筆`);
+  } catch (err) { toast('還原失敗：' + err.message); }
 }
 
 function applyTheme() {
@@ -692,7 +955,8 @@ function applyTheme() {
 }
 
 async function exportData() {
-  const data = { app: 'xiuxing', version: APP_VERSION, exportedAt: new Date().toISOString(), settings, logs: await dbAll('logs'), diary: await dbAll('diary') };
+  // 錄音檔太大，不放進備份檔（有開雲端同步的話，錄音在雲端硬碟）
+  const data = { app: 'xiuxing', version: APP_VERSION, exportedAt: new Date().toISOString(), settings, logs: await dbAll('logs'), diary: (await dbAll('diary')).map(stripAudio) };
   const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -708,8 +972,8 @@ async function importData(file) {
     const data = JSON.parse(await file.text());
     if (data.app !== 'xiuxing') throw new Error('不是修行紀錄的備份檔');
     if (!confirm(`匯入 紀錄 ${data.logs?.length || 0} 筆、日記 ${data.diary?.length || 0} 篇？\n同一筆會用備份檔的內容蓋過，其他資料保留。`)) return;
-    for (const l of data.logs || []) await dbPut('logs', l);
-    for (const d of data.diary || []) await dbPut('diary', d);
+    for (const l of data.logs || []) await saveRec('logs', l, false);
+    for (const d of data.diary || []) await saveRec('diary', d, false);
     if (data.settings && confirm('也要套用備份檔裡的設定（迴向文、自訂項目、正式啟用日）嗎？')) { settings = Object.assign(settings, data.settings); await saveSettings(); }
     toast('匯入完成'); renderSettings();
   } catch (err) { alert('匯入失敗：' + err.message); }
@@ -723,4 +987,6 @@ async function importData(file) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
   route();
+  window.addEventListener('online', () => syncNow(false));
+  setTimeout(() => syncNow(false), 2000);
 })();
