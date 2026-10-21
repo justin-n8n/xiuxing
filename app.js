@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.8.2';
+const APP_VERSION = '0.9.0';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -24,7 +24,7 @@ const APP_VERSION = '0.8.2';
       log(`${t} 目標=${name(e.target)}${stack ? '｜點到=' + stack : ''}${e.defaultPrevented ? '｜被擋' : ''}`);
     }, true);
   }
-  setTimeout(() => log(`啟動：${typeof settings !== 'undefined' && settings ? '設定已載入' : '⚠️ 設定沒載入（資料庫卡住？）'}｜SW=${navigator.serviceWorker?.controller ? '有' : '無'}`), 3000);
+  setTimeout(async () => log(`啟動：${typeof settings !== 'undefined' && settings ? '設定已載入' : '⚠️ 設定沒載入（資料庫卡住？）'}｜SW=${navigator.serviceWorker?.controller ? '有' : '無'}｜持久儲存=${await navigator.storage?.persisted?.() ? '有' : '沒有'}`), 3000);
   // v0.6.2：點了之後發生什麼——失去焦點、打字、畫面大小（鍵盤）、畫面重畫、勾選框有沒有真的變
   document.addEventListener('focusout', e => log(`focusout ${name(e.target)} → ${name(e.relatedTarget)}`), true);
   document.addEventListener('input', e => log(`input ${name(e.target)} 長度=${(e.target.value || '').length}${e.target.type === 'checkbox' ? ' 勾=' + e.target.checked : ''}`), true);
@@ -207,8 +207,10 @@ const getRec = (store, id) => req(store, 'readonly', s => s.get(id));
 const stripAudio = ({ audio, ...rest }) => ({ ...rest, hasAudio: !!(audio || rest.audioFileId) });
 const blobToB64 = blob => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); });
 
+let syncKeepalive = false; // 切到背景時送：讓瀏覽器在頁面被收起後還把這次送完（#28）
 async function syncPost(cfg, payload) {
-  const r = await fetch(cfg.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...payload, pass: cfg.pass }) });
+  const body = JSON.stringify({ ...payload, pass: cfg.pass });
+  const r = await fetch(cfg.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body, keepalive: syncKeepalive && body.length < 60000 });
   const j = await r.json().catch(() => ({ ok: false, error: r.status === 404
     ? '找不到 Apps Script（HTTP 404）：網址可能換了。到 Apps Script「部署 → 管理部署作業」複製目前的網址，貼到這裡的設定'
     : '回應看不懂（HTTP ' + r.status + '）' }));
@@ -227,13 +229,23 @@ async function syncNow(manual) {
     const logs = (await Promise.all(q.logs.map(id => getRec('logs', id)))).filter(Boolean);
     const diary = (await Promise.all(q.diary.map(id => getRec('diary', id)))).filter(Boolean).map(stripAudio);
     const dels = [...q.deletes];
-    for (let i = 0; i < Math.max(logs.length, diary.length, dels.length, stateDocs.length ? 1 : 0); i += 100) {
-      await syncPost(cfg, { action: 'push', logs: logs.slice(i, i + 100), diary: diary.slice(i, i + 100), deletes: dels.slice(i, i + 100), state: i ? [] : stateDocs });
+    for (let i = 0; i < Math.max(logs.length, diary.length, dels.length); i += 100) {
+      await syncPost(cfg, { action: 'push', logs: logs.slice(i, i + 100), diary: diary.slice(i, i + 100), deletes: dels.slice(i, i + 100) });
     }
-    const sentAt = Object.fromEntries(stateDocs.map(d => [d.k, d.at]));
-    await withQueue(async q2 => { // 只拿掉這次送出的，同步途中新增或又改過的留著下次送
-      q2.logs = q2.logs.filter(id => !q.logs.includes(id));
-      q2.diary = q2.diary.filter(id => !q.diary.includes(id));
+    // 進度與設定另外送（#1）：抄經進度很大或出錯時，不會拖累紀錄和日記
+    let stateFailed = [];
+    if (stateDocs.length) {
+      const r = await syncPost(cfg, { action: 'push', state: stateDocs });
+      stateFailed = (r.stateErrors || []).map(e => e.k);
+    }
+    const ver = r => r.updatedAt || r.at;
+    const sentLog = Object.fromEntries(logs.map(r => [r.id, ver(r)])), sentDiary = Object.fromEntries(diary.map(r => [r.id, ver(r)]));
+    const sentAt = Object.fromEntries(stateDocs.filter(d => !stateFailed.includes(d.k)).map(d => [d.k, d.at]));
+    await withQueue(async q2 => { // 只拿掉這次送出、而且送出後沒再改過的（#3）；同步途中新增或又改過的留著下次送
+      const curL = await Promise.all(q2.logs.map(id => getRec('logs', id)));
+      q2.logs = q2.logs.filter((id, i) => !(id in sentLog) || (curL[i] && ver(curL[i]) !== sentLog[id]));
+      const curD = await Promise.all(q2.diary.map(id => getRec('diary', id)));
+      q2.diary = q2.diary.filter((id, i) => !(id in sentDiary) || (curD[i] && ver(curD[i]) !== sentDiary[id]));
       q2.deletes = q2.deletes.filter(d => !dels.includes(d));
       const now = await Promise.all(q2.state.map(kvRaw));
       q2.state = q2.state.filter((k, i) => !(k in sentAt) || now[i]?.at !== sentAt[k]);
@@ -260,14 +272,14 @@ async function syncNow(manual) {
     // 抓另一台的變動：只抓上次以後的（伺服器時間），兩台的時鐘不準也不影響
     const j = await syncPost(cfg, { action: 'pull', since: cfg.lastPull || '' });
     const ch = await applyPull(j, cfg);
-    cfg.lastPull = j.now;
-    cfg.lastAt = new Date().toISOString(); cfg.lastError = '';
-    await kvSet('sync', cfg);
+    // 只更新同步狀態欄位，同步途中在設定頁改的網址或密語不會被蓋回（#26）
+    await kvSet('sync', Object.assign(await kvGet('sync', {}), { lastPull: j.now, lastAt: new Date().toISOString(),
+      lastError: stateFailed.length ? '有 ' + stateFailed.length + ' 項進度沒送成功，下次再試' : '' }));
     if (manual) toast(`已同步：送出 紀錄 ${logs.length}、日記 ${diary.length}、進度 ${stateDocs.length}；收到 ${ch.recs + ch.dels + ch.keys.size + ch.pics} 項`);
     refreshAfterSync(ch);
     return true;
   } catch (err) {
-    cfg.lastError = err.message; await kvSet('sync', cfg);
+    await kvSet('sync', Object.assign(await kvGet('sync', {}), { lastError: err.message }));
     if (manual) toast('同步失敗：' + err.message);
     return false;
   } finally {
@@ -333,15 +345,18 @@ async function applyPull(j, cfg) {
     if (await getRec(d.store, d.id)) { await dbDel(d.store, d.id); ch.dels++; }
   }
   for (const d of j.state || []) if (await applyState(d)) ch.keys.add(d.k);
-  for (const meta of j.copies || []) {
+  // 抄經圖：這台沒有的才下載；下載失敗的記下來，下次同步再抓（#12）
+  const failed = [];
+  for (const meta of [...(j.copies || []), ...await kvGet('pendingImgs', [])]) {
     if (await getRec('copies', meta.id) || !meta.imageFileId) continue;
     try {
       const g = await syncPost(cfg, { action: 'getimg', fileId: meta.imageFileId });
       const bin = Uint8Array.from(atob(g.data), c => c.charCodeAt(0));
       delete meta._srv;
       await dbPut('copies', { ...meta, image: new Blob([bin], { type: g.mime || 'image/webp' }) }); ch.pics++;
-    } catch (_) { /* 這頁先略過，下次再抓 */ }
+    } catch (_) { if (!failed.some(m => m.id === meta.id)) failed.push(meta); }
   }
+  await kvSet('pendingImgs', failed);
   return ch;
 }
 /** 收到另一台的變動後，只重畫「不會打斷你」的畫面（寫日記、設定頁不重畫） */
@@ -349,10 +364,11 @@ function refreshAfterSync(ch) {
   if (!(ch.recs || ch.dels || ch.pics || ch.keys.size) || !$('#modal').hidden) return;
   const [name, sub] = (location.hash.slice(1) || 'home').split('/');
   if (name === 'settings' || (name === 'diary' && sub)) return;
-  if (!sub || name === 'sit') route();
-  else if (name === 'chant' && ch.keys.has('chant:' + sub)) route();
-  else if (name === 'copy' && sub === 'book' && ch.pics) route();
-  else if (name === 'copy' && sub !== 'book' && ch.keys.has('copyRun:' + sub)) route();
+  if (name === 'sit') { if (ch.keys.has('sitRun')) route(true); } // 打坐設定畫面選到一半不重畫（#16）
+  else if (!sub) route(true);
+  else if (name === 'chant' && ch.keys.has('chant:' + sub)) route(true);
+  else if (name === 'copy' && sub === 'book' && ch.pics) route(true);
+  else if (name === 'copy' && sub !== 'book' && ch.keys.has('copyRun:' + sub)) route(true);
 }
 async function pendingCount() {
   const q = Object.assign(emptyQueue(), await kvGet('syncQueue', {}));
@@ -366,7 +382,7 @@ async function loadSettings() {
   const stored = await kvGet('settings', {});
   settings = Object.assign({
     dedication: DEFAULT_DEDICATION, startDate: '', customSutras: [], customChants: [], customMoods: [],
-    showDiamond: false, setOrder: null, myName: '張演平', dharmaName: '演平', nickName: '阿輝', __at: {},
+    showDiamond: false, setOrder: null, myName: '', dharmaName: '', nickName: '', __at: {}, // 名字由使用者在設定填（會同步），不寫進公開的程式（#20）
   }, stored);
   if (settings.dedication === OLD_DEDICATION) settings.dedication = DEFAULT_DEDICATION; // 沒改過的舊預設換成課誦本的
   // 「手指也能寫」只屬於這台（v0.6.0 起另外存；以前存在設定裡的搬過來）
@@ -466,18 +482,23 @@ function askNumber(title, value, unit) {
 }
 
 /* 螢幕常亮（計數、打坐時） */
-let wakeLock = null;
+let wakeLock = null, wakeWanted = false, wakeBusy = Promise.resolve();
 let pageCleanup = null; // 離開頁面時要做的事（例如停止錄音）
-async function keepAwake(on) {
-  try {
-    if (on && 'wakeLock' in navigator && !wakeLock) {
-      wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', () => { wakeLock = null; });
-    } else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
-  } catch (e) { /* 不支援就算了 */ }
+/** 螢幕常亮（#17）：記住「這頁要常亮」，切出去再回來會重新要求；換頁時 route() 統一放掉；同時呼叫也只要一次 */
+function keepAwake(on) {
+  wakeWanted = on;
+  wakeBusy = wakeBusy.then(async () => {
+    try {
+      if (wakeWanted && 'wakeLock' in navigator && !wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } else if (!wakeWanted && wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch (e) { /* 不支援就算了 */ }
+  });
+  return wakeBusy;
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && document.body.classList.contains('immersive')) keepAwake(true);
+  if (document.visibilityState === 'visible' && wakeWanted) keepAwake(true);
 });
 
 /* ---------- 引磬聲（即時合成，不用音檔） ---------- */
@@ -488,18 +509,22 @@ function audio() {
   return audioCtx;
 }
 function strike(t0) {
-  const ctx = audio(); const base = 1180;
+  const ctx = audio(); const base = 1180, nodes = [];
   [[1, .5, 4.5], [2.76, .22, 2.4], [5.4, .1, 1.2], [8.93, .05, .6]].forEach(([r, g, dur]) => {
     const o = ctx.createOscillator(); const v = ctx.createGain();
     o.type = 'sine'; o.frequency.value = base * r;
     v.gain.setValueAtTime(0.0001, t0); v.gain.exponentialRampToValueAtTime(g, t0 + 0.006);
     v.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     o.connect(v).connect(ctx.destination); o.start(t0); o.stop(t0 + dur + .05);
+    nodes.push(o);
   });
+  return nodes;
 }
 function bells(n = 1, delay = 0) {
   const ctx = audio(); const t = ctx.currentTime + .05 + delay;
-  for (let i = 0; i < n; i++) strike(t + i * 2.4);
+  const nodes = [];
+  for (let i = 0; i < n; i++) nodes.push(...strike(t + i * 2.4));
+  return nodes;
 }
 
 /* ---------- 打坐流水聲（新Q6）：Wikimedia Commons 公有領域的淺溪錄音，頭尾交疊成無縫循環 ---------- */
@@ -546,17 +571,21 @@ function stopWater(sec = 3) {
 const routes = {
   cover: renderCover, home: renderHome, sutra: renderSutra, chant: renderChant, sit: renderSit, copy: renderCopy, diary: renderDiary, settings: renderSettings,
 };
-async function route() {
+async function route(keepScroll = false) {
   const [name, ...rest] = (location.hash.slice(1) || 'home').split('/');
   const fn = routes[name] || renderHome;
-  if (pageCleanup) { try { pageCleanup(); } catch (_) { /* 忽略 */ } pageCleanup = null; }
+  const y = scrollY;
+  // 等上一頁收尾存完再畫新頁（#8：例如抄經進度、日記錄音）
+  if (pageCleanup) { const c = pageCleanup; pageCleanup = null; try { await c(); } catch (_) { /* 忽略 */ } }
+  view.onclick = view.onchange = null; // 上一頁的點擊處理不留著（#27）
+  keepAwake(false); // 需要常亮的頁面自己再要（#17）
   document.body.classList.remove('immersive');
   closeModal();
   setTab(routes[name] ? name : 'home');
   await fn(...rest.map(decodeURIComponent));
-  window.scrollTo(0, 0);
+  window.scrollTo(0, keepScroll ? y : 0); // 同步後重畫時留在原來位置（#16）
 }
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => route());
 $('#settingsBtn').onclick = () => { location.hash = 'settings'; };
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 
@@ -634,7 +663,7 @@ function cheerFor(st) {
     const n = st.streak;
     msg = pick(n <= 2 ? CHEERS.t1 : n <= 6 ? CHEERS.t2 : n <= 20 ? CHEERS.t3 : n <= 48 ? CHEERS.t4 : n <= 99 ? CHEERS.t5 : CHEERS.t6);
   }
-  return msg.replace(/\{n\}/g, st.streak).replace(/\{t\}/g, st.total).replace(/\{nick\}/g, settings.nickName || '').replace(/\{fa\}/g, settings.dharmaName || '');
+  return msg.replace(/\{n\}/g, st.streak).replace(/\{t\}/g, st.total).replace(/\{nick\}/g, settings.nickName || settings.dharmaName || '').replace(/\{fa\}/g, settings.dharmaName || settings.nickName || '');
 }
 /** 具體的成果（每天輪一項有數字的） */
 function cheerFact(st) {
@@ -695,7 +724,7 @@ async function renderHome() {
     `<div class="stat"><b>${fmtNum(tot[i.id])}</b><span>${esc(i.name)}（${esc(i.unit)}）${i.unit === '聲' && tot[i.id] >= BEADS ? `・${Math.floor(tot[i.id] / BEADS)} 串` : ''}</span></div>`).join('');
 
   const copyProg = [];
-  for (const c of COPY_SUTRAS) { const r = await getCopyRun(c.id); if (copyStarted(r)) copyProg.push(`${c.name} 第 ${r.page + 1}/${copyCells(c).length} 頁`); }
+  for (const c of COPY_SUTRAS) { const r = await getCopyRun(c.id); if (r.pendingDed) copyProg.push(`${c.name} 抄完了、等迴向`); else if (copyStarted(r)) copyProg.push(`${c.name} 第 ${Math.min(r.page + 1, copyCells(c).length)}/${copyCells(c).length} 頁`); }
   const testing = !settings.startDate
     ? `<div class="banner">🧪 目前是<b>測試期間</b>：三段全部做完後，到設定填「正式啟用日」，累積就從那天算起。</div>` : '';
 
@@ -909,7 +938,7 @@ async function renderSet() {
     </div>`;
   keepAwake(true);
   const secs = $$('.set-sec');
-  let cur = startIdx, saveT = null;
+  let cur = startIdx, saveT = null, finishing = false;
   const showPos = () => { $('#setPos').textContent = `第 ${cur + 1}/${items.length} 項・${items[cur].name}`; };
   const onScroll = () => {
     const line = innerHeight * 0.35;
@@ -936,6 +965,9 @@ async function renderSet() {
       $('#dedBox').innerHTML = '<span class="tag">🙏 已迴向</span>'; toast('已迴向 🙏'); return;
     }
     if (a === 'finish') {
+      if (finishing) return; // 連按兩下只記一次（#11）
+      finishing = true;
+      try {
       if (cur < items.length - 1 && !confirm('還沒念到最後一項，確定完成這套功課？')) return;
       if (!run.dedicated && !await dedicate('整套功課')) return;
       const at = new Date().toISOString();
@@ -947,6 +979,7 @@ async function renderSet() {
       await kvDel('setRun');
       toast('完成一套功課 🙏');
       location.hash = 'sutra';
+      } finally { finishing = false; }
     }
   };
 }
@@ -1083,7 +1116,7 @@ async function renderSit() {
       p.water = $('#waterOn').checked;
       if (p.mode === 'down' && !(p.minutes > 0)) { toast('請選時間'); return; }
       await kvSet('sitPrefs', p);
-      const r = { start: Date.now(), mode: p.mode, minutes: p.minutes, interval: p.interval, intervalMin: p.intervalMin, rung: 0, water: p.water, waterVol: p.waterVol };
+      const r = { start: Date.now(), device: DEVICE, mode: p.mode, minutes: p.minutes, interval: p.interval, intervalMin: p.intervalMin, water: p.water, waterVol: p.waterVol };
       trying = false;
       if (p.water) await startWater(p.waterVol); else stopWater(0.5);
       bells(3);
@@ -1100,7 +1133,46 @@ function fmtClock(sec) {
   return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0')) + ':' + String(s).padStart(2, '0');
 }
 
+/* 打坐中的聲音（#6）：開始時就用音訊時鐘把提醒鐘、結束三聲排好；螢幕關掉、切出去、按返回鍵都照樣會響 */
+let sitSound = null; // { key: 開始時間, nodes: 排好的聲音 }
+function scheduleSitSounds(r) {
+  if (sitSound?.key === r.start) return;
+  cancelSitSounds();
+  const ctx = audio(), el = (Date.now() - r.start) / 1000, nodes = [];
+  const end = r.mode === 'down' ? r.minutes * 60 : el + 3 * 3600; // 正數：先排 3 小時內的提醒鐘
+  if (r.interval) {
+    const I = r.intervalMin * 60;
+    for (let k = Math.floor(el / I) + 1; k * I < end - 5; k++) nodes.push(...strike(ctx.currentTime + (k * I - el)));
+  }
+  if (r.mode === 'down' && end > el) {
+    const t = ctx.currentTime + (end - el) + (r.water ? 3 : 0); // 有流水聲時先淡出 3 秒再響
+    for (let i = 0; i < 3; i++) nodes.push(...strike(t + i * 2.4));
+    if (r.water && waterGain) { const g = waterGain.gain, t0 = ctx.currentTime + (end - el); g.setValueAtTime(g.value, t0); g.linearRampToValueAtTime(0, t0 + 3); }
+  }
+  sitSound = { key: r.start, nodes };
+}
+function cancelSitSounds() {
+  sitSound?.nodes.forEach(o => { try { o.stop(); } catch (_) { /* 已停 */ } });
+  sitSound = null;
+}
+
+/* 另一台正在打坐（#9）：這台只顯示，不計時、不敲鐘、不跳下坐表單 */
+function renderOtherSitting(r) {
+  view.innerHTML = `
+    <div class="card" style="text-align:center">
+      <h2>另一台正在打坐 🧘</h2>
+      <p class="clock" id="otherClock" style="font-family:var(--serif);font-size:2.4rem;margin:8px 0"></p>
+      <p class="small muted">${r.mode === 'down' ? `倒數 ${r.minutes} 分` : '正數'}・${fmtTime(r.start)} 開始。下坐、記錄會在那一台做。</p>
+      <button class="btn" id="clearOther">那台已經沒在坐了，清掉這個狀態</button>
+    </div>`;
+  const tick = () => { const el = (Date.now() - r.start) / 1000, c = $('#otherClock'); if (c) c.textContent = fmtClock(r.mode === 'down' ? r.minutes * 60 - el : el); };
+  tick(); clearInterval(sitTimer); sitTimer = setInterval(tick, 1000);
+  pageCleanup = () => clearInterval(sitTimer);
+  $('#clearOther').onclick = async () => { if (confirm('清掉「另一台正在打坐」？（不會記錄，那一台如果還在坐也會停止顯示）')) { await kvDel('sitRun'); route(); } };
+}
+
 function renderSitting(r) {
+  if (r.device && r.device !== DEVICE) return renderOtherSitting(r);
   view.onclick = null;
   document.body.classList.add('immersive');
   keepAwake(true);
@@ -1109,46 +1181,50 @@ function renderSitting(r) {
       <div class="small">${r.mode === 'down' ? `倒數 ${r.minutes} 分` : '正數'}${r.interval ? `・每 ${r.intervalMin} 分提醒` : ''}</div>
       <div class="clock" id="clock"></div>
       ${r.water ? `<label class="row small water-ctl">🌊 <input type="range" id="waterVol2" min="5" max="100" value="${r.waterVol}" aria-label="流水聲音量"></label>` : ''}
+      <button class="btn" id="soundBtn" hidden>🔔 點一下恢復聲音</button>
       <button class="btn" id="stop">${r.mode === 'down' ? '提前下坐' : '下坐'}</button>
     </div>`;
-  if (r.water) {
-    if (!waterSrc) startWater(r.waterVol); // 重新打開 App 時接著播（被瀏覽器擋住的話，動一下音量就會播）
-    $('#waterVol2').oninput = e => { r.waterVol = Number(e.target.value); if (!waterSrc) startWater(r.waterVol); else setWaterVol(r.waterVol); kvSet('sitRun', r); };
-  }
+  const arm = async () => { // 重新打開 App 時：瀏覽器要點一下才肯出聲
+    if (r.water && !waterSrc) await startWater(r.waterVol);
+    scheduleSitSounds(r);
+    $('#soundBtn').hidden = audio().state === 'running';
+  };
+  arm();
+  $('#soundBtn').onclick = async () => { await audio().resume(); cancelSitSounds(); arm(); };
+  if (r.water) $('#waterVol2').oninput = e => { r.waterVol = Number(e.target.value); if (!waterSrc) startWater(r.waterVol); else setWaterVol(r.waterVol); kvSet('sitRun', r); };
   let finished = false;
   const tick = () => {
     const el = (Date.now() - r.start) / 1000;
-    $('#clock').textContent = fmtClock(r.mode === 'down' ? r.minutes * 60 - el : el);
-    if (r.interval) {
-      const due = Math.floor(el / (r.intervalMin * 60));
-      const endAt = r.mode === 'down' ? r.minutes * 60 : Infinity;
-      if (due > r.rung && el < endAt - 5) { r.rung = due; kvSet('sitRun', r); bells(1); }
-    }
-    if (r.mode === 'down' && el >= r.minutes * 60 && !finished) { finished = true; finish(r.minutes * 60, true); }
+    const c = $('#clock'); if (c) c.textContent = fmtClock(r.mode === 'down' ? r.minutes * 60 - el : el); // 離開畫面也照樣檢查時間（#5）
+    if (r.mode === 'down' && el >= r.minutes * 60 && !finished && c) { finished = true; finish(r.minutes * 60, false); } // 結束鐘聲已經排好了
   };
   tick();
   clearInterval(sitTimer);
   sitTimer = setInterval(tick, 500);
+  // 按返回鍵離開（#5）：計時與排好的鐘聲照常，回到「打坐」就接著顯示；流水聲照放
+  pageCleanup = () => { clearInterval(sitTimer); if (!finished) toast('還在打坐中，回到「打坐」可以接著看時間'); };
   $('#stop').onclick = () => {
     if (!confirm('確定要下坐了嗎？')) return;
-    finished = true; finish((Date.now() - r.start) / 1000, true);
+    finished = true; cancelSitSounds(); finish((Date.now() - r.start) / 1000, true);
   };
   async function finish(sec, ring) {
     clearInterval(sitTimer);
     const fade = waterSrc ? 3 : 0; // 流水聲先 3 秒淡出，再響引磬
     stopWater(fade);
     if (ring) bells(3, fade);
+    sitSound = null;
     keepAwake(false);
     const minutes = Math.round(sec / 60 * 10) / 10;
     const info = await sitForm(minutes);
     if (info && await dedicate(`打坐 ${fmtMinutes(minutes)}`)) {
-      await saveRec('logs', { id: uid(), type: 'sit', itemId: 'sit', name: '打坐', unit: '分', minutes, seconds: Math.round(sec), mode: r.mode, method: info.method, note: info.note, dedicated: true, at: new Date(r.start).toISOString() });
+      // id 用開始時間：萬一兩台都記到同一次，也只算一筆（#9）
+      await saveRec('logs', { id: 'sit-' + r.start, type: 'sit', itemId: 'sit', name: '打坐', unit: '分', minutes, seconds: Math.round(sec), mode: r.mode, method: info.method, note: info.note, dedicated: true, at: new Date(r.start).toISOString() });
       toast(`已記錄：打坐 ${fmtMinutes(minutes)} 🙏`);
     } else {
       toast('這次沒有記錄');
     }
     await kvDel('sitRun');
-    location.hash = 'sit'; renderSit();
+    if (location.hash === '#sit') route(); else location.hash = 'sit';
   }
 }
 
@@ -1182,7 +1258,7 @@ const COPY_SUTRAS = [
   { id: 'heart', name: '心經', text: 'heart', upto: '菩提薩婆訶' },   // 經後的「摩訶般若波羅蜜多（三稱）」不抄
   { id: 'dabei', name: '大悲咒', text: 'dabei', after: '（三遍）' },  // 咒前的「南無大悲觀世音菩薩」不抄
   { id: 'pumen', name: '普門品', text: 'pumen' },
-  { id: 'puxian', name: '普賢十大願王', text: 'puxian' },
+  { id: 'puxian', name: '普賢十大願王', text: 'puxian', upto: '十者普皆回向' }, // 只抄十條願（10/21 Justin）
 ];
 const COPY_ITEMS = COPY_SUTRAS.map(c => ({ id: 'copy:' + c.id, name: '抄經・' + c.name, unit: '遍' }));
 const GRID = 10;                 // 每頁 10 行 × 10 字
@@ -1314,6 +1390,14 @@ async function renderCopyPage(id) {
   const run = await getCopyRun(id);
   if (run.pendingDed) { location.hash = 'copy'; return; }
   const pages = copyCells(c);
+  // 經文改過時（例如十大願王改成只抄十條願），已寫的字對不上格子（#23）：這一遍從第 1 頁重來；頁數變少時不超出
+  const sig = copySig(pages);
+  if (run.sig && run.sig !== sig && copyStarted(run)) {
+    toast('這部經的內容改過了，這一遍從第 1 頁重新開始');
+    Object.assign(run, { page: 0, chars: {}, charsAt: {}, drafts: {}, pos: null });
+  }
+  run.sig = sig;
+  if (run.page >= pages.length) Object.assign(run, { page: pages.length - 1, pos: null });
   setTitle('抄經・' + c.name);
   document.body.classList.add('immersive');
   keepAwake(true);
@@ -1357,10 +1441,11 @@ async function renderCopyPage(id) {
   const pageFull = run.pos < 0; // 另一台已經把這頁寫完（同步合併後）：畫好之後直接完成這頁
   if (pageFull) run.pos = writable().at(-1);
   const loadStrokes = () => { strokes = (run.drafts[run.pos] || run.chars[run.pos] || []).map(s => ({ c: s.c, p: s.p.slice() })); };
-  const keepDraft = () => { run.drafts[run.pos] = strokes; };
+  const keepDraft = () => { if (run.pos != null && run.pos >= 0) run.drafts[run.pos] = strokes; }; // #25
   let saveT = null;
   const save = () => { clearTimeout(saveT); saveT = setTimeout(() => saveCopyRun(id, run), 300); };
   const fingerOk = () => settings.fingerWrite && !sawPen; // 用過筆以後，手掌（觸控）一律不算
+  let lastPen = 0, busy = false; // lastPen：筆最後一次碰畫面的時間（#10）；busy：存頁時不收按鈕（#4）
 
   const drawSheetNow = () => { sctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); drawPage(sctx, sheetSize, cells, run.chars, { cur: run.pos }); };
   const drawBox = () => {
@@ -1395,14 +1480,15 @@ async function renderCopyPage(id) {
   const goto = (i, keep = true) => { if (keep) keepDraft(); run.pos = i; loadStrokes(); save(); drawSheetNow(); drawBox(); showInfo(); };
 
   // 大格子寫字
-  const pos = e => { const r = bxink.getBoundingClientRect(); return [+((e.clientX - r.left) / box).toFixed(4), +((e.clientY - r.top) / box).toFixed(4), e.pointerType === 'pen' ? +(e.pressure || .5).toFixed(2) : .5]; };
+  // 座標存到小數 3 位、壓力 1 位：資料小一點，同步比較快（#1）
+  const pos = e => { const r = bxink.getBoundingClientRect(); return [+((e.clientX - r.left) / box).toFixed(3), +((e.clientY - r.top) / box).toFixed(3), e.pointerType === 'pen' ? +(e.pressure || .5).toFixed(1) : .5]; };
   const eraseAt = ([x, y]) => {
     const n = strokes.length;
     strokes = strokes.filter(s => !s.p.some(([a, b]) => Math.hypot(a - x, b - y) < .05));
     if (strokes.length !== n) { redrawInk(); keepDraft(); save(); }
   };
   bxink.addEventListener('pointerdown', e => {
-    if (e.pointerType === 'pen') sawPen = true;
+    if (e.pointerType === 'pen') { sawPen = true; lastPen = Date.now(); }
     if (e.pointerType === 'touch' && !fingerOk()) return; // 手指、手掌不畫
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault(); try { bxink.setPointerCapture(e.pointerId); } catch (_) { /* 沒有實體指標時忽略 */ }
@@ -1436,7 +1522,7 @@ async function renderCopyPage(id) {
 
   const onResize = () => layout();
   window.addEventListener('resize', onResize);
-  pageCleanup = () => { window.removeEventListener('resize', onResize); keepDraft(); clearTimeout(saveT); saveCopyRun(id, run); keepAwake(false); };
+  pageCleanup = () => { window.removeEventListener('resize', onResize); keepDraft(); clearTimeout(saveT); return saveCopyRun(id, run); };
   loadStrokes(); await layout();
 
   // 這頁寫完（三Q10）：存成圖（只有格線和手寫字），換下一頁；整部寫完迴向
@@ -1460,6 +1546,9 @@ async function renderCopyPage(id) {
   if (pageFull) await finishPage();
 
   view.onclick = async e => {
+    // 筆剛碰過畫面 1.5 秒內的手指／手掌點擊不算（#10）：寫字時手掌常壓到下面的按鈕
+    if (e.pointerType === 'touch' && Date.now() - lastPen < 1500) return;
+    if (busy) return; // 正在存這一頁（#4）
     const dot = e.target.closest('[data-ink]');
     if (dot) { prefs.ink = dot.dataset.ink; eraser = false; kvSet('copyPrefs', prefs); showInfo(); return; }
     const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return;
@@ -1468,7 +1557,7 @@ async function renderCopyPage(id) {
     if (a === 'mode') { prefs.mode = prefs.mode === 'trace' ? 'copy' : 'trace'; kvSet('copyPrefs', prefs); drawBox(); showInfo(); return; }
     if (a === 'undo') { strokes.pop(); redrawInk(); keepDraft(); save(); return; }
     if (a === 'eraser') { eraser = !eraser; showInfo(); return; }
-    if (a === 'clear') { if (strokes.length) { strokes = []; redrawInk(); keepDraft(); save(); } return; }
+    if (a === 'clear') { if (strokes.length && confirm('清除這個字？')) { strokes = []; redrawInk(); keepDraft(); save(); } return; } // #10
     if (a === 'prev') { if (k > 0) goto(w[k - 1]); else toast('這是這頁的第一個字'); return; }
     if (a === 'next') { if (!$('#nextBtn').disabled) goto(w[k + 1]); return; }
     if (a === 'ok') {
@@ -1476,7 +1565,8 @@ async function renderCopyPage(id) {
       run.chars[run.pos] = strokes; run.charsAt[run.pos] = new Date().toISOString(); delete run.drafts[run.pos];
       const f = frontier();
       if (f >= 0) { goto(f, false); return; } // 回到原本寫到的地方（重寫時）或下一個字
-      await finishPage();
+      busy = true; $('.copy-ok').disabled = true;
+      try { await finishPage(); } finally { busy = false; const b = $('.copy-ok'); if (b) b.disabled = false; }
     }
   };
 }
@@ -1487,8 +1577,16 @@ async function saveCopyRun(id, run) {
   if (cur && !run.pendingDed) {
     const m = mergeCopyRun(copyShared(cur), copyShared(run));
     if (m.round === run.round && m.page === run.page) Object.assign(run, m);
+    // 已存的進度比手上的還前面（另一台已經換頁或寫完這遍，#8）：不要用舊頁蓋回去
+    else { Object.assign(run, m, { drafts: {}, pos: null }); return; }
   }
   await kvSet(copyRunKey(id), run);
+}
+/** 經文排格子的指紋：經文改過時用來發現已寫的字會對錯格（#23） */
+function copySig(pages) {
+  const t = pages.flat().map(x => x ? x.ch + (x.p || '') : '_').join('');
+  let h = 0; for (const ch of t) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return t.length + '-' + h.toString(36);
 }
 
 /** 存一頁抄經圖，排進待同步（圖檔上傳到雲端硬碟「抄經」資料夾） */
@@ -1669,9 +1767,11 @@ async function renderDiaryForm(id) {
         recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
         const chunks = [];
         recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+        const rec = recorder;
         recorder.onstop = () => {
-          audioBlob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }); audioChanged = true;
-          stream.getTracks().forEach(t => t.stop()); stream = null; showAudio();
+          audioBlob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' }); audioChanged = true;
+          stream?.getTracks().forEach(t => t.stop()); stream = null; showAudio();
+          stopped?.(); stopped = null;
         };
         recorder.start(1000);
       } catch (e) { done(); micFail(micErr(e)); return; }
@@ -1681,16 +1781,23 @@ async function renderDiaryForm(id) {
     if (vmode !== 'audio') startRecog();
     keepAwake(true);
   };
+  let stopped = null;
+  /** 停止錄音；回傳的 Promise 等錄音檔真的收好才完成（最多 3 秒，#7） */
   const stopVoice = () => {
-    if (!recording) return;
+    if (!recording) return Promise.resolve();
     recording = false;
     try { recog?.stop(); } catch (_) { /* 已停 */ }
     recog = null;
-    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    let wait = Promise.resolve();
+    if (recorder && recorder.state !== 'inactive') {
+      wait = Promise.race([new Promise(res => { stopped = res; }), new Promise(res => setTimeout(res, 3000))]);
+      recorder.stop();
+    }
     recorder = null; setMicUi(); keepAwake(false);
     setTimeout(() => { if (!recording && !recogFailed) note(''); }, 1500);
+    return wait;
   };
-  pageCleanup = () => { stopVoice(); if (objUrl) URL.revokeObjectURL(objUrl); };
+  pageCleanup = async () => { await stopVoice(); if (objUrl) URL.revokeObjectURL(objUrl); };
   showAudio();
 
   view.onclick = async e => {
@@ -1710,8 +1817,7 @@ async function renderDiaryForm(id) {
     if (a === 'moreThanks') { $('#thanks').insertAdjacentHTML('beforeend', '<li><input type="text" class="thx"></li>'); $('#thanks li:last-child input').focus(); return; }
     if (a === 'cancel') { stopVoice(); history.back(); return; }
     if (e.target.id === 'save') {
-      stopVoice();
-      await new Promise(res => setTimeout(res, 300)); // 等錄音收尾
+      await stopVoice(); // 等錄音檔收好才存（#7）
       r.text = txt.value.trim(); r.share = $('#share').checked;
       r.thanks = $$('#thanks .thx').map(i => i.value.trim()).filter(Boolean); // 空的不存（Q2）
       if (!r.text && !audioBlob && !r.thanks.length) { toast('還沒有寫內容、感恩或錄音'); return; }
@@ -1921,18 +2027,31 @@ async function importData(file) {
   try {
     const data = JSON.parse(await file.text());
     if (data.app !== 'xiuxing') throw new Error('不是修行紀錄的備份檔');
-    if (!confirm(`匯入 紀錄 ${data.logs?.length || 0} 筆、日記 ${data.diary?.length || 0} 篇？\n同一筆會用備份檔的內容蓋過，其他資料保留。`)) return;
-    for (const l of data.logs || []) await saveRec('logs', l, false);
-    for (const d of data.diary || []) await saveRec('diary', d, false);
+    if (!confirm(`匯入 紀錄 ${data.logs?.length || 0} 筆、日記 ${data.diary?.length || 0} 篇？\n同一筆以比較新的為準；這台的錄音會保留。`)) return;
+    // 本機那筆比較新就不蓋；日記的錄音不在備份檔裡，保留本機的（#2）
+    const newer = (a, b) => String(a.updatedAt || a.at || '') > String(b.updatedAt || b.at || '');
+    for (const l of data.logs || []) { const cur = await getRec('logs', l.id); if (!cur || !newer(cur, l)) await saveRec('logs', l, false); }
+    for (const d of data.diary || []) {
+      const cur = await getRec('diary', d.id);
+      if (cur && newer(cur, d)) continue;
+      delete d.hasAudio;
+      if (cur?.audio) d.audio = cur.audio;
+      if (cur?.audioFileId && !d.audioFileId) d.audioFileId = cur.audioFileId;
+      await saveRec('diary', d, false);
+    }
     if (data.settings && confirm('也要套用備份檔裡的設定（迴向文、自訂項目、正式啟用日）嗎？')) { settings = Object.assign(settings, data.settings); await saveSettings(); }
     toast('匯入完成'); renderSettings();
   } catch (err) { alert('匯入失敗：' + err.message); }
 }
 
 /* ---------- 啟動 ---------- */
+let DEVICE = ''; // 這台機器的代號（只存在這台）：分辨「打坐中」是哪一台（#9）
 (async function start() {
   applyTheme();
   await loadSettings();
+  DEVICE = await kvGet('deviceId', '');
+  if (!DEVICE) { DEVICE = uid(); await kvSet('deviceId', DEVICE); }
+  navigator.storage?.persist?.().catch(() => {}); // 請瀏覽器不要在空間不足時清掉這個 App 的資料（#15）
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
@@ -1942,7 +2061,9 @@ async function importData(file) {
   window.addEventListener('online', () => syncNow(false));
   setTimeout(() => syncNow(false), 2000);
   let lastWake = 0; // 從別的 App 切回來時同步一次（10 秒內只算一次）
-  document.addEventListener('visibilitychange', () => {
+  document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible' && Date.now() - lastWake > 10000) { lastWake = Date.now(); syncNow(false); }
+    // 切到背景時，有還沒送的就馬上送（#28）
+    if (document.visibilityState === 'hidden' && await pendingCount()) { syncKeepalive = true; try { await syncNow(false); } finally { syncKeepalive = false; } }
   });
 })();
