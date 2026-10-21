@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.6.3';
+const APP_VERSION = '0.6.4';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -1702,7 +1702,8 @@ async function renderSettings() {
       if (!confirm('移除這一項？（已經記過的紀錄不會刪）')) return;
       settings[kind].splice(Number(i), 1); await saveSettings(); renderSettings();
     }
-    const th = e.target.closest('[data-theme]')?.dataset.theme;
+    // 只找「外觀」那三個按鈕：網頁最外層 <html> 選了淺色／深色時也有 data-theme，不能被當成按鈕（10/21 手機深色時設定頁每點一下就重畫的原因）
+    const th = e.target.closest('#theme [data-theme]')?.dataset.theme;
     if (th) { localStorage.setItem('theme', th); applyTheme(); renderSettings(); }
     if (e.target.id === 'export') exportData();
     if (e.target.id === 'syncSave') {
