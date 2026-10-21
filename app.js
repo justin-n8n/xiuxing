@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.8.1';
+const APP_VERSION = '0.8.2';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -561,6 +561,9 @@ $('#settingsBtn').onclick = () => { location.hash = 'settings'; };
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 
 /* ---------- 封面（v0.7.0，10/21 封面Q1～Q7）：每天第一次打開先看到禪坐圖、今日法語、打氣話 ---------- */
+// 「問問聖嚴師父」官方網站（v0.8.2，Justin 指定）：封面與首頁各一個連結，開新分頁
+const ASK_URL = 'https://ask.shengyen.org/';
+const askLink = cls => `<a class="${cls}" href="${ASK_URL}" target="_blank" rel="noopener">💬 問問聖嚴師父</a>`;
 // 封面金剛經名言（v0.8.0，Q5～Q7：四句每天輪一句；用 Justin 給的常見寫法）
 const DIAMOND_LINES = ['應無所住，而生其心。', '凡所有相，皆是虛妄。', '一切有為法，如夢幻泡影，如露亦如電，應作如是觀。', '過去心不可得，現在心不可得，未來心不可得。'];
 const dayNo = k => { const [y, m, d] = k.split('-').map(Number); return Math.floor(Date.UTC(y, m - 1, d) / 864e5); };
@@ -659,6 +662,7 @@ async function renderCover() {
       <div class="cover-card diamond"><div class="cover-label">金剛經</div><p class="cover-quote">${esc(DIAMOND_LINES[dayNo(todayKey()) % DIAMOND_LINES.length])}</p><div class="cover-src">——《金剛般若波羅蜜經》</div></div>
       ${q ? `<div class="cover-card"><div class="cover-label">今日法語</div><p class="cover-quote">${esc(q).replace(/\n/g, '<br>')}</p><div class="cover-src">—— 摘自《聖嚴法師108自在語》</div></div>` : ''}
       <div class="cover-card cheer"><p>${esc(cheerFor(st))}</p>${fact ? `<div class="cover-fact">${esc(fact)}</div>` : ''}</div>
+      ${askLink('btn big cover-ask')}
       <button class="btn primary big cover-enter" data-a="enter">進入修行紀錄 🙏</button>
     </div>`;
   view.onclick = e => { if (e.target.closest('[data-a="enter"]')) location.hash = 'home'; };
@@ -696,7 +700,7 @@ async function renderHome() {
     ? `<div class="banner">🧪 目前是<b>測試期間</b>：三段全部做完後，到設定填「正式啟用日」，累積就從那天算起。</div>` : '';
 
   view.innerHTML = `
-    <div class="row" style="justify-content:flex-end;margin:-6px 0 6px"><button class="link-btn" onclick="location.hash='cover'">🪷 回封面</button></div>
+    <div class="row" style="justify-content:flex-end;gap:14px;margin:-6px 0 6px">${askLink('link-btn')}<button class="link-btn" onclick="location.hash='cover'">🪷 回封面</button></div>
     ${testing}
     <div class="card">
       <h2>今天 ${fmtDay(today)}</h2>
