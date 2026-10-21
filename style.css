@@ -203,3 +203,22 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 .voice #vmode { margin-top: 8px; }
 .voice #vmode .chip { min-height: 32px; padding: 4px 12px; font-size: .8rem; }
 #interim { min-height: 1.4em; margin-top: 6px; }
+
+/* 抄經（v0.4.0）：字型為霞鶩文楷 TC 子集（SIL OFL 1.1，見 assets/copyfont-OFL.txt） */
+@font-face { font-family: "CopyKai"; src: url("assets/copyfont.woff2") format("woff2"); font-display: block; }
+.copy {
+  position: fixed; inset: 0; z-index: 8; display: flex; flex-direction: column; gap: 8px; background: var(--bg);
+  padding: calc(8px + env(safe-area-inset-top)) 10px calc(8px + env(safe-area-inset-bottom));
+}
+.copy-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.copy-bar .btn { padding: 7px 12px; min-height: 40px; }
+.copy-title { font-family: var(--serif); margin-left: 6px; }
+.copy-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; position: relative; }
+.copy-stage canvas { position: absolute; border-radius: 4px; box-shadow: 0 1px 6px rgba(0,0,0,.15); }
+.copy-stage #ink { touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair; }
+.ink-dot { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--card); background: var(--dot); box-shadow: 0 0 0 1px var(--line); }
+.ink-dot.on { box-shadow: 0 0 0 3px var(--accent); }
+.book-h { font-family: var(--serif); text-align: center; font-size: 1.2rem; }
+.book-page { margin: 0 0 18px; text-align: center; }
+.book-page img { width: 100%; max-width: 640px; border-radius: 6px; box-shadow: var(--shadow); background: #fffdf6; }
+.book-page figcaption { color: var(--muted); font-size: .85rem; margin-top: 4px; }

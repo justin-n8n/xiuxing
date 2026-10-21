@@ -1,7 +1,7 @@
-/* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、首頁、迴向、離線、雲端同步 */
+/* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 
 /* ---------- 預設內容 ---------- */
 // 依課誦本的順序（v0.3.0，10/21 新Q3）；part：只在功課裡念、不另記遍數（新Q4）；hidden：預設隱藏（新Q2）
@@ -59,12 +59,15 @@ function shiftDay(k, n) {
 let dbp;
 function db() {
   if (!dbp) dbp = new Promise((res, rej) => {
-    const r = indexedDB.open('xiuxing', 1);
-    r.onupgradeneeded = () => {
+    const r = indexedDB.open('xiuxing', 2);
+    r.onupgradeneeded = e => {
       const d = r.result;
-      d.createObjectStore('logs', { keyPath: 'id' });
-      d.createObjectStore('diary', { keyPath: 'id' });
-      d.createObjectStore('kv', { keyPath: 'k' });
+      if (e.oldVersion < 1) {
+        d.createObjectStore('logs', { keyPath: 'id' });
+        d.createObjectStore('diary', { keyPath: 'id' });
+        d.createObjectStore('kv', { keyPath: 'k' });
+      }
+      if (e.oldVersion < 2) d.createObjectStore('copies', { keyPath: 'id' }); // v0.4.0 抄經頁（圖）
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -88,7 +91,7 @@ const kvSet = (k, v) => dbPut('kv', { k, v });
 const kvDel = k => dbDel('kv', k);
 
 /* ---------- 雲端同步（第二段）：存檔時記進待同步清單，有網路就送到 Apps Script ---------- */
-const emptyQueue = () => ({ logs: [], diary: [], deletes: [], audio: [] });
+const emptyQueue = () => ({ logs: [], diary: [], deletes: [], audio: [], copies: [] });
 let qChain = Promise.resolve();
 function withQueue(fn) { // 待同步清單的讀寫排隊進行，避免互相蓋掉
   const run = qChain.then(async () => { const q = Object.assign(emptyQueue(), await kvGet('syncQueue', {})); const r = await fn(q); await kvSet('syncQueue', q); return r; });
@@ -153,9 +156,19 @@ async function syncNow(manual) {
       }
       await withQueue(q2 => { q2.audio = q2.audio.filter(x => x !== id); });
     }
+    for (const id of q.copies) { // 抄經圖：一頁一張，上傳到雲端硬碟「抄經」資料夾
+      const rec = await getRec('copies', id);
+      if (rec?.image && !rec.imageFileId) {
+        const { image, ...meta } = rec;
+        const res = await syncPost(cfg, { action: 'copyimg', meta, mime: image.type || 'image/webp', data: await blobToB64(image) });
+        const cur = await getRec('copies', id);
+        if (cur) { cur.imageFileId = res.fileId; await dbPut('copies', cur); }
+      }
+      await withQueue(q2 => { q2.copies = q2.copies.filter(x => x !== id); });
+    }
     cfg.lastAt = new Date().toISOString(); cfg.lastError = '';
     await kvSet('sync', cfg);
-    if (manual) toast(`已同步：紀錄 ${logs.length}、日記 ${diary.length}、錄音 ${q.audio.length}`);
+    if (manual) toast(`已同步：紀錄 ${logs.length}、日記 ${diary.length}、錄音 ${q.audio.length}、抄經 ${q.copies.length} 頁`);
     return true;
   } catch (err) {
     cfg.lastError = err.message; await kvSet('sync', cfg);
@@ -168,7 +181,7 @@ async function syncNow(manual) {
 }
 async function pendingCount() {
   const q = Object.assign(emptyQueue(), await kvGet('syncQueue', {}));
-  return q.logs.length + q.diary.length + q.deletes.length + q.audio.length;
+  return q.logs.length + q.diary.length + q.deletes.length + q.audio.length + q.copies.length;
 }
 
 /* ---------- 設定 ---------- */
@@ -176,7 +189,7 @@ let settings = null;
 async function loadSettings() {
   settings = Object.assign({
     dedication: DEFAULT_DEDICATION, startDate: '', customSutras: [], customChants: [], customMoods: [],
-    showDiamond: false, setOrder: null,
+    showDiamond: false, setOrder: null, fingerWrite: false,
   }, await kvGet('settings', {}));
   if (settings.dedication === OLD_DEDICATION) settings.dedication = DEFAULT_DEDICATION; // 沒改過的舊預設換成課誦本的
 }
@@ -194,7 +207,7 @@ function setOrder() {
 const setItems = () => setOrder().filter(x => x.on).map(x => sutraItems().find(s => s.id === x.id)).filter(Boolean);
 const chantItems = () => [...BUILTIN_CHANTS, ...settings.customChants];
 const moodList = () => [...BUILTIN_MOODS, ...settings.customMoods];
-const findItem = id => [SET_ITEM, ...allSutraItems(), ...chantItems()].find(i => i.id === id);
+const findItem = id => [SET_ITEM, ...allSutraItems(), ...COPY_ITEMS, ...chantItems()].find(i => i.id === id);
 const counted = rec => !settings.startDate || dayKey(rec.at) >= settings.startDate;
 
 /* ---------- 畫面共用 ---------- */
@@ -326,7 +339,7 @@ function stopWater(sec = 3) {
 
 /* ---------- 路由 ---------- */
 const routes = {
-  home: renderHome, sutra: renderSutra, chant: renderChant, sit: renderSit, diary: renderDiary, settings: renderSettings,
+  home: renderHome, sutra: renderSutra, chant: renderChant, sit: renderSit, copy: renderCopy, diary: renderDiary, settings: renderSettings,
 };
 async function route() {
   const [name, ...rest] = (location.hash.slice(1) || 'home').split('/');
@@ -365,9 +378,11 @@ async function renderHome() {
     if (l.type === 'sit') sitMin += l.minutes || 0;
     else tot[l.itemId] = (tot[l.itemId] || 0) + (l.count || 0);
   });
-  const totalLines = [SET_ITEM, ...allSutraItems(), ...chantItems()].filter(i => tot[i.id]).map(i =>
+  const totalLines = [SET_ITEM, ...allSutraItems(), ...COPY_ITEMS, ...chantItems()].filter(i => tot[i.id]).map(i =>
     `<div class="stat"><b>${fmtNum(tot[i.id])}</b><span>${esc(i.name)}（${esc(i.unit)}）${i.unit === '聲' && tot[i.id] >= BEADS ? `・${Math.floor(tot[i.id] / BEADS)} 串` : ''}</span></div>`).join('');
 
+  const copyProg = [];
+  for (const c of COPY_SUTRAS) { const r = await getCopyRun(c.id); if (r.page || r.strokes.length) copyProg.push(`${c.name} 第 ${r.page + 1}/${copyCells(c).length} 頁`); }
   const testing = !settings.startDate
     ? `<div class="banner">🧪 目前是<b>測試期間</b>：三段全部做完後，到設定填「正式啟用日」，累積就從那天算起。</div>` : '';
 
@@ -385,6 +400,7 @@ async function renderHome() {
         ${totalLines}
         <div class="stat"><b>${diary.length}</b><span>日記（篇）</span></div>
       </div>
+      ${copyProg.length ? `<p class="small muted" style="margin:10px 0 0">🖌️ 抄經進行中：${copyProg.join('、')}</p>` : ''}
     </div>
     <div class="card">
       <h2>修行日曆（點一天看紀錄）</h2>
@@ -844,6 +860,270 @@ function sitForm(minutes) {
   });
 }
 
+/* ---------- 抄經（v0.4.0，新Q7、新Q19～新Q26）：直書描紅、10×10 田字格、觸控筆寫、每頁存圖 ---------- */
+const COPY_SUTRAS = [
+  { id: 'heart', name: '心經', text: 'heart', upto: '菩提薩婆訶' },   // 經後的「摩訶般若波羅蜜多（三稱）」不抄
+  { id: 'dabei', name: '大悲咒', text: 'dabei', after: '（三遍）' },  // 咒前的「南無大悲觀世音菩薩」不抄
+  { id: 'pumen', name: '普門品', text: 'pumen' },
+  { id: 'puxian', name: '普賢十大願王', text: 'puxian' },
+];
+const COPY_ITEMS = COPY_SUTRAS.map(c => ({ id: 'copy:' + c.id, name: '抄經・' + c.name, unit: '遍' }));
+const GRID = 10;                 // 每頁 10 行 × 10 字
+const INKS = { black: '#222222', red: '#b8322a' };
+const PAPER = '#fffdf6', GRID_RED = '#d39a90', GUIDE = '#c9c4bc';
+
+/** 把經文排成格子：經題一行（太長就兩行），接著正文；句號、逗號不佔格，記在前一個字上 */
+const copyCache = {};
+function copyCells(c) {
+  if (copyCache[c.id]) return copyCache[c.id];
+  const t = window.SUTRA_TEXTS[c.text];
+  let ps = t.paragraphs;
+  if (c.after) ps = ps.slice(ps.indexOf(c.after) + 1);
+  if (c.upto) ps = ps.slice(0, ps.findIndex(p => p.includes(c.upto)) + 1);
+  const cells = [...t.title].map(ch => ({ ch }));
+  while (cells.length % GRID) cells.push(null);
+  for (const ch of ps.join('').replace(/（[^）]*）/g, '').replace(/[\s　]/g, '')) {
+    if ('。，'.includes(ch)) { const last = cells[cells.length - 1]; if (last) last.p = ch; continue; }
+    cells.push({ ch });
+  }
+  const pages = [];
+  for (let i = 0; i < cells.length; i += GRID * GRID) pages.push(cells.slice(i, i + GRID * GRID));
+  return (copyCache[c.id] = pages);
+}
+const copyRunKey = id => 'copyRun:' + id;
+const getCopyRun = async id => Object.assign({ round: 1, page: 0, strokes: [], pendingDed: false }, await kvGet(copyRunKey(id), {}));
+
+let fontReady = null;
+function loadCopyFont() {
+  if (!fontReady) fontReady = document.fonts.load('48px CopyKai', '觀').catch(() => {});
+  return fontReady;
+}
+
+/** 畫字帖底稿：田字格＋淡灰經文（直書，由右到左） */
+function drawSheet(ctx, size, cells, guide = GUIDE) {
+  const cell = size / GRID;
+  ctx.fillStyle = PAPER; ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = GRID_RED; ctx.lineWidth = Math.max(1, size / 500);
+  ctx.setLineDash([]);
+  for (let i = 0; i <= GRID; i++) {
+    ctx.beginPath(); ctx.moveTo(i * cell, 0); ctx.lineTo(i * cell, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i * cell); ctx.lineTo(size, i * cell); ctx.stroke();
+  }
+  ctx.lineWidth = Math.max(.5, size / 1000); ctx.setLineDash([cell / 14, cell / 14]);
+  for (let i = 0; i < GRID; i++) {
+    ctx.beginPath(); ctx.moveTo((i + .5) * cell, 0); ctx.lineTo((i + .5) * cell, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, (i + .5) * cell); ctx.lineTo(size, (i + .5) * cell); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.fillStyle = guide; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const fallback = getComputedStyle(document.documentElement).getPropertyValue('--serif'); // 字型裡沒有的字（例如「嘇」）用明體補
+  cells.forEach((c, i) => {
+    if (!c) return;
+    const col = Math.floor(i / GRID), row = i % GRID;
+    const x = size - (col + .5) * cell, y = (row + .5) * cell;
+    ctx.font = `${cell * .8}px CopyKai, ${fallback}`;
+    ctx.fillText(c.ch, x, y + cell * .03);
+    if (c.p) { ctx.font = `${cell * .34}px CopyKai, serif`; ctx.fillText(c.p, x + cell * .42, y + cell * .36); }
+  });
+}
+function drawStrokes(ctx, size, strokes) {
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  strokes.forEach(s => {
+    ctx.strokeStyle = INKS[s.c] || INKS.black;
+    for (let i = 1; i < s.p.length; i++) {
+      const [x0, y0, p0] = s.p[i - 1], [x1, y1, p1] = s.p[i];
+      ctx.lineWidth = penWidth(size, (p0 + p1) / 2);
+      ctx.beginPath(); ctx.moveTo(x0 * size, y0 * size); ctx.lineTo(x1 * size, y1 * size); ctx.stroke();
+    }
+    if (s.p.length === 1) { const [x, y, p] = s.p[0]; ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.arc(x * size, y * size, penWidth(size, p) / 2, 0, 7); ctx.fill(); }
+  });
+}
+const penWidth = (size, p) => (size / GRID) * .055 * (.45 + 1.1 * (p || .5));
+
+/* 抄經首頁 */
+async function renderCopy(id, ...rest) {
+  if (id === 'book') return renderCopyBook(...rest);
+  if (id) return renderCopyPage(id);
+  setTitle('抄經');
+  const logs = (await dbAll('logs')).filter(l => l.type === 'copy' && counted(l));
+  const tot = {}; logs.forEach(l => { tot[l.itemId] = (tot[l.itemId] || 0) + l.count; });
+  const runs = {}; for (const c of COPY_SUTRAS) runs[c.id] = await getCopyRun(c.id);
+  view.innerHTML = `
+    <div class="card"><ul class="list">${COPY_SUTRAS.map(c => {
+      const pages = copyCells(c).length, r = runs[c.id];
+      const st = r.pendingDed ? `第 ${r.round} 遍抄完了，還沒迴向` : r.page || r.strokes.length ? `第 ${r.round} 遍・寫到第 ${r.page + 1}/${pages} 頁` : `共 ${pages} 頁`;
+      return `<li><button class="item-btn" data-id="${c.id}">
+        <span><span class="name">${esc(c.name)}</span><br><span class="sub">${st}</span></span>
+        <span class="sub">已抄 ${fmtNum(tot['copy:' + c.id] || 0)} 遍 ›</span></button></li>`; }).join('')}</ul></div>
+    <button class="btn big" onclick="location.hash='copy/book'">📚 我的抄經本</button>
+    <p class="muted small">平板用觸控筆照著淡灰的字描；手指不會畫到（設定可以打開「手指也能寫」）。每頁寫完按「這頁完成」，下次從沒寫完的那頁接著抄。</p>`;
+  view.onclick = async e => {
+    const b = e.target.closest('.item-btn'); if (!b) return;
+    const c = COPY_SUTRAS.find(x => x.id === b.dataset.id), r = runs[c.id];
+    if (r.pendingDed) { await finishCopyRound(c, r); renderCopy(); return; }
+    location.hash = `copy/${c.id}`;
+  };
+}
+
+async function finishCopyRound(c, r) {
+  if (!await dedicate(`抄經・${c.name} 第 ${r.round} 遍`)) {
+    r.pendingDed = true; await kvSet(copyRunKey(c.id), r);
+    toast('之後在抄經頁點這部經就可以迴向'); return false;
+  }
+  await saveRec('logs', { id: uid(), type: 'copy', itemId: 'copy:' + c.id, name: '抄經・' + c.name, unit: '遍', count: 1, round: r.round, dedicated: true, at: new Date().toISOString() });
+  const done = r.round;
+  Object.assign(r, { round: r.round + 1, page: 0, strokes: [], pendingDed: false }); // 直接改同一個物件，離開抄經頁時存的才會是新的進度
+  await kvSet(copyRunKey(c.id), r);
+  toast(`已記錄：抄經・${c.name} 第 ${done} 遍 🙏`);
+  return true;
+}
+
+/* 抄經頁：上面工具列、中間字帖、下面按鈕 */
+async function renderCopyPage(id) {
+  view.onclick = null;
+  const c = COPY_SUTRAS.find(x => x.id === id);
+  if (!c) { location.hash = 'copy'; return; }
+  const run = await getCopyRun(id);
+  if (run.pendingDed) { location.hash = 'copy'; return; }
+  const pages = copyCells(c);
+  setTitle('抄經・' + c.name);
+  document.body.classList.add('immersive');
+  keepAwake(true);
+  const prefs = Object.assign({ ink: 'black' }, await kvGet('copyPrefs', {}));
+  view.innerHTML = `
+    <div class="copy">
+      <div class="copy-bar">
+        <button class="btn" data-a="leave">‹ 先離開</button>
+        <span class="copy-title">${esc(c.name)}・第 ${run.round} 遍・<b id="pg"></b></span>
+      </div>
+      <div class="copy-stage" id="stage"><canvas id="bg"></canvas><canvas id="ink"></canvas></div>
+      <div class="copy-bar">
+        <button class="btn" data-a="undo" aria-label="上一筆">↶ 上一筆</button>
+        <button class="btn" data-a="eraser" id="eraserBtn">🧽 橡皮擦</button>
+        <button class="btn" data-a="clear">清除這頁</button>
+        <button class="ink-dot" data-ink="black" style="--dot:${INKS.black}" aria-label="黑色墨"></button>
+        <button class="ink-dot" data-ink="red" style="--dot:${INKS.red}" aria-label="朱紅墨"></button>
+        <span class="grow"></span>
+        <button class="btn primary" data-a="done">這頁完成 ✓</button>
+      </div>
+    </div>`;
+  const stage = $('#stage'), bg = $('#bg'), ink = $('#ink');
+  const bctx = bg.getContext('2d'), ictx = ink.getContext('2d');
+  let size = 0, eraser = false, cur = null, sawPen = false;
+  const fingerOk = () => settings.fingerWrite && !sawPen; // 用過筆以後，手掌（觸控）一律不算
+  const showInk = () => $$('.ink-dot').forEach(b => b.classList.toggle('on', b.dataset.ink === prefs.ink && !eraser));
+  const showPage = () => { $('#pg').textContent = `第 ${run.page + 1}/${pages.length} 頁`; };
+  const redrawInk = () => { ictx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); ictx.clearRect(0, 0, size, size); drawStrokes(ictx, size, run.strokes); };
+  const layout = async () => {
+    const r = stage.getBoundingClientRect();
+    size = Math.floor(Math.min(r.width, r.height));
+    for (const cv of [bg, ink]) { cv.width = size * devicePixelRatio; cv.height = size * devicePixelRatio; cv.style.width = cv.style.height = size + 'px'; }
+    await loadCopyFont();
+    bctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    drawSheet(bctx, size, pages[run.page]);
+    redrawInk();
+  };
+  let saveT = null;
+  const saveDraft = () => { clearTimeout(saveT); saveT = setTimeout(() => kvSet(copyRunKey(id), run), 300); };
+  const pos = e => { const r = ink.getBoundingClientRect(); return [+((e.clientX - r.left) / size).toFixed(4), +((e.clientY - r.top) / size).toFixed(4), e.pointerType === 'pen' ? +(e.pressure || .5).toFixed(2) : .5]; };
+  const eraseAt = ([x, y]) => {
+    const rad = .022, n = run.strokes.length;
+    run.strokes = run.strokes.filter(s => !s.p.some(([a, b]) => Math.hypot(a - x, b - y) < rad));
+    if (run.strokes.length !== n) { redrawInk(); saveDraft(); }
+  };
+  ink.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'pen') sawPen = true;
+    if (e.pointerType === 'touch' && !fingerOk()) return; // 手指、手掌不畫
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault(); try { ink.setPointerCapture(e.pointerId); } catch (_) { /* 沒有實體指標時忽略 */ }
+    const p = pos(e);
+    if (eraser) { cur = { erase: true, id: e.pointerId }; eraseAt(p); return; }
+    cur = { id: e.pointerId, s: { c: prefs.ink, p: [p] } };
+    run.strokes.push(cur.s);
+    drawStrokes(ictx, size, [cur.s]);
+  });
+  ink.addEventListener('pointermove', e => {
+    if (!cur || e.pointerId !== cur.id) return;
+    const co = e.getCoalescedEvents?.(); // 筆的細點（比較滑順）；拿不到就用這一個
+    for (const ev of co && co.length ? co : [e]) {
+      const p = pos(ev);
+      if (cur.erase) { eraseAt(p); continue; }
+      const pts = cur.s.p, last = pts[pts.length - 1];
+      if (Math.hypot(p[0] - last[0], p[1] - last[1]) < .0015) continue;
+      pts.push(p); drawStrokes(ictx, size, [{ c: cur.s.c, p: [last, p] }]);
+    }
+  });
+  const end = e => { if (cur && e.pointerId === cur.id) { cur = null; saveDraft(); } };
+  ink.addEventListener('pointerup', end); ink.addEventListener('pointercancel', end);
+  const onResize = () => layout();
+  window.addEventListener('resize', onResize);
+  pageCleanup = () => { window.removeEventListener('resize', onResize); clearTimeout(saveT); kvSet(copyRunKey(id), run); keepAwake(false); };
+  showPage(); showInk(); await layout();
+
+  view.onclick = async e => {
+    const dot = e.target.closest('[data-ink]');
+    if (dot) { prefs.ink = dot.dataset.ink; eraser = false; $('#eraserBtn').classList.remove('primary'); kvSet('copyPrefs', prefs); showInk(); return; }
+    const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return;
+    if (a === 'leave') { location.hash = 'copy'; return; }
+    if (a === 'undo') { run.strokes.pop(); redrawInk(); saveDraft(); return; }
+    if (a === 'eraser') { eraser = !eraser; $('#eraserBtn').classList.toggle('primary', eraser); showInk(); return; }
+    if (a === 'clear') { if (run.strokes.length && confirm('清除這一頁寫的字？')) { run.strokes = []; redrawInk(); saveDraft(); } return; }
+    if (a === 'done') {
+      if (!run.strokes.length) { toast('這頁還沒有寫字'); return; }
+      if (!confirm(`第 ${run.page + 1} 頁完成了嗎？完成後就不能再改。`)) return;
+      // 存成圖：1000×1000，底稿淡一點、墨跡照寫的
+      const out = document.createElement('canvas'); out.width = out.height = 1000;
+      const octx = out.getContext('2d');
+      drawSheet(octx, 1000, pages[run.page], '#dedad3'); drawStrokes(octx, 1000, run.strokes);
+      const blob = await new Promise(res => out.toBlob(res, 'image/webp', .85));
+      await saveCopy({ id: uid(), sutraId: c.id, name: c.name, round: run.round, page: run.page + 1, pages: pages.length, image: blob, at: new Date().toISOString() });
+      run.page++; run.strokes = [];
+      if (run.page >= pages.length) {
+        run.pendingDed = true; await kvSet(copyRunKey(id), run);
+        await finishCopyRound(c, run);
+        location.hash = 'copy'; return;
+      }
+      await kvSet(copyRunKey(id), run);
+      toast(`第 ${run.page} 頁完成 🙏`);
+      showPage(); await layout();
+    }
+  };
+}
+
+/** 存一頁抄經圖，排進待同步（圖檔上傳到雲端硬碟「抄經」資料夾） */
+async function saveCopy(rec) {
+  rec.updatedAt = new Date().toISOString();
+  await dbPut('copies', rec);
+  await withQueue(q => { if (!q.copies.includes(rec.id)) q.copies.push(rec.id); });
+  scheduleSync();
+}
+
+/* 我的抄經本：依經、依遍數整理，點進去一頁一頁看 */
+async function renderCopyBook(sutraId, round) {
+  setTitle('我的抄經本');
+  const all = (await dbAll('copies')).sort((a, b) => a.at.localeCompare(b.at));
+  const urls = []; pageCleanup = () => urls.forEach(u => URL.revokeObjectURL(u));
+  if (sutraId) {
+    const ps = all.filter(r => r.sutraId === sutraId && String(r.round) === String(round)).sort((a, b) => a.page - b.page);
+    const name = COPY_SUTRAS.find(c => c.id === sutraId)?.name || sutraId;
+    view.innerHTML = `<div class="sutra-head"><button class="btn" onclick="location.hash='copy/book'">‹ 返回</button></div>
+      <h2 class="book-h">${esc(name)}・第 ${esc(round)} 遍</h2>
+      ${ps.map(r => { let src = ''; if (r.image) { src = URL.createObjectURL(r.image); urls.push(src); }
+        return `<figure class="book-page">${src ? `<img src="${src}" alt="第 ${r.page} 頁">` : '<div class="empty">這頁的圖在雲端硬碟（這台沒有副本）</div>'}<figcaption>第 ${r.page} 頁・${fmtDay(dayKey(r.at))}</figcaption></figure>`; }).join('')}`;
+    view.onclick = null; return;
+  }
+  const groups = {};
+  all.forEach(r => { const k = r.sutraId + '|' + r.round; (groups[k] ||= []).push(r); });
+  const keys = Object.keys(groups).sort((a, b) => groups[b].at(-1).at.localeCompare(groups[a].at(-1).at));
+  view.innerHTML = `<div class="sutra-head"><button class="btn" onclick="location.hash='copy'">‹ 抄經</button></div>
+    ${keys.length ? `<div class="card"><ul class="list">${keys.map(k => { const g = groups[k], [sid, rd] = k.split('|');
+      const name = COPY_SUTRAS.find(c => c.id === sid)?.name || sid, total = g[0].pages || copyCells(COPY_SUTRAS.find(c => c.id === sid)).length;
+      return `<li><button class="item-btn" data-k="${esc(k)}"><span><span class="name">${esc(name)}・第 ${esc(rd)} 遍</span><br>
+        <span class="sub">${fmtDay(dayKey(g[0].at))}${dayKey(g.at(-1).at) !== dayKey(g[0].at) ? ' ～ ' + fmtDay(dayKey(g.at(-1).at)) : ''}</span></span>
+        <span class="sub">${g.length}/${total} 頁 ›</span></button></li>`; }).join('')}</ul></div>` : '<div class="empty">還沒有抄完的頁面</div>'}`;
+  view.onclick = e => { const b = e.target.closest('[data-k]'); if (b) { const [s, r] = b.dataset.k.split('|'); location.hash = `copy/book/${s}/${r}`; } };
+}
+
 /* ---------- 心情日記 ---------- */
 async function renderDiary(action, id) {
   if (action === 'new' || action === 'edit') return renderDiaryForm(id);
@@ -1057,6 +1337,10 @@ async function renderSettings() {
       <label class="switch" style="margin-top:12px"><input type="checkbox" id="showDiamond" ${settings.showDiamond ? 'checked' : ''}> 顯示金剛經（CBETA 版，可單念、可加進功課）</label>
     </div>
     <div class="card">
+      <h2>抄經</h2>
+      <label class="switch"><input type="checkbox" id="fingerWrite" ${settings.fingerWrite ? 'checked' : ''}> 手指也能寫（手機用；平板用觸控筆時請關掉，手掌才不會畫到）</label>
+    </div>
+    <div class="card">
       <h2>正式啟用日</h2>
       <p class="small muted" style="margin-top:0">三段全部做完後再填。填了以後，首頁和累積只算這天以後的紀錄（之前的測試紀錄保留，不會刪）。</p>
       <div class="row"><input type="date" id="startDate" value="${esc(settings.startDate)}" style="max-width:12em"><button class="btn" id="startSave">儲存</button></div>
@@ -1090,15 +1374,16 @@ async function renderSettings() {
     </div>
     <div class="card">
       <h2>備份</h2>
-      <p class="small muted" style="margin-top:0">還沒開雲端同步前，資料只存在這支手機，建議每週匯出一次，存到雲端硬碟的私人資料夾（不要放進專案資料夾）。備份檔不含錄音。</p>
+      <p class="small muted" style="margin-top:0">還沒開雲端同步前，資料只存在這支手機，建議每週匯出一次，存到雲端硬碟的私人資料夾（不要放進專案資料夾）。備份檔不含錄音和抄經圖（這兩樣靠雲端同步）。</p>
       <div class="row"><button class="btn primary" id="export">匯出備份</button><label class="btn" style="display:inline-flex;align-items:center">匯入備份<input type="file" id="import" accept="application/json,.json" hidden></label></div>
     </div>
-    <p class="small muted">修行紀錄 v${APP_VERSION}・34.修行紀錄App。經文依《佛教朝暮課誦本》與法鼓文化《觀音法門》，僅供個人修行使用；金剛經為 CBETA（CC BY-NC-SA 3.0 TW）。流水聲：Wikimedia Commons 公有領域錄音。</p>`;
+    <p class="small muted">修行紀錄 v${APP_VERSION}・34.修行紀錄App。經文依《佛教朝暮課誦本》與法鼓文化《觀音法門》，僅供個人修行使用；金剛經為 CBETA（CC BY-NC-SA 3.0 TW）。流水聲：Wikimedia Commons 公有領域錄音。抄經字型：霞鶩文楷 TC（SIL OFL 1.1）。</p>`;
 
   view.onchange = async e => {
     const son = e.target.dataset?.son;
     if (son) { const o = setOrder(); o.find(x => x.id === son).on = e.target.checked; settings.setOrder = o; await saveSettings(); return; }
     if (e.target.id === 'showDiamond') { settings.showDiamond = e.target.checked; await saveSettings(); renderSettings(); }
+    if (e.target.id === 'fingerWrite') { settings.fingerWrite = e.target.checked; await saveSettings(); toast(settings.fingerWrite ? '手指也能寫了' : '只有觸控筆能寫'); }
   };
   view.onclick = async e => {
     const mv = e.target.closest('[data-mv]')?.dataset.mv;
@@ -1164,8 +1449,9 @@ async function renderSyncStatus() {
 
 /** 第一次接上雲端時，把手機上已有的紀錄全部排進待同步 */
 async function enqueueAll() {
-  const [logs, diary] = await Promise.all([dbAll('logs'), dbAll('diary')]);
+  const [logs, diary, copies] = await Promise.all([dbAll('logs'), dbAll('diary'), dbAll('copies')]);
   await withQueue(q => {
+    copies.forEach(c => { if (c.image && !c.imageFileId && !q.copies.includes(c.id)) q.copies.push(c.id); });
     logs.forEach(l => { if (!q.logs.includes(l.id)) q.logs.push(l.id); });
     diary.forEach(d => {
       if (!q.diary.includes(d.id)) q.diary.push(d.id);
@@ -1191,7 +1477,16 @@ async function pullFromCloud() {
         }
       }
     }
-    toast(`還原完成：更新 ${n} 筆`);
+    let pics = 0; // 抄經圖：這台沒有的才下載
+    for (const meta of j.copies || []) {
+      if (await getRec('copies', meta.id) || !meta.imageFileId) continue;
+      try {
+        const g = await syncPost(cfg, { action: 'getimg', fileId: meta.imageFileId });
+        const bin = Uint8Array.from(atob(g.data), ch => ch.charCodeAt(0));
+        await dbPut('copies', { ...meta, image: new Blob([bin], { type: g.mime || 'image/webp' }) }); pics++;
+      } catch (_) { /* 這頁先略過，下次再還原 */ }
+    }
+    toast(`還原完成：更新 ${n} 筆、抄經 ${pics} 頁`);
   } catch (err) { toast('還原失敗：' + err.message); }
 }
 
