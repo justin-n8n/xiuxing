@@ -1,15 +1,23 @@
-/* 修行紀錄 App（34.修行紀錄App）第一段：念經、佛號、打坐、文字日記、首頁、迴向、離線、備份 */
+/* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.3.0';
 
 /* ---------- 預設內容 ---------- */
+// 依課誦本的順序（v0.3.0，10/21 新Q3）；part：只在功課裡念、不另記遍數（新Q4）；hidden：預設隱藏（新Q2）
 const BUILTIN_SUTRAS = [
+  { id: 'gongmian', name: '四眾佛子共勉語', unit: '遍', text: 'gongmian', part: true },
+  { id: 'dabei', name: '大悲咒', unit: '遍', text: 'dabei' },
   { id: 'heart', name: '心經', unit: '遍', text: 'heart' },
   { id: 'pumen', name: '普門品', unit: '遍', text: 'pumen' },
-  { id: 'dabei', name: '大悲咒', unit: '遍', text: 'dabei' },
-  { id: 'diamond', name: '金剛經', unit: '遍', text: 'diamond' },
+  { id: 'puxian', name: '普賢十大願王', unit: '遍', text: 'puxian' },
+  { id: 'sangui', name: '三皈依', unit: '遍', text: 'sangui', part: true },
+  { id: 'huixiang', name: '回向偈', unit: '遍', text: 'huixiang', part: true, dedication: true },
+  { id: 'hongyuan', name: '四弘誓願', unit: '遍', text: 'hongyuan', part: true },
+  { id: 'jingzhong', name: '普賢警眾偈', unit: '遍', text: 'jingzhong', part: true },
+  { id: 'diamond', name: '金剛經', unit: '遍', text: 'diamond', hidden: true },
 ];
+const SET_ITEM = { id: 'set', name: '完整功課', unit: '次' };
 const BUILTIN_CHANTS = [
   { id: 'amitabha', name: '阿彌陀佛', unit: '聲' },
   { id: 'guanyin', name: '觀世音菩薩', unit: '聲' },
@@ -17,7 +25,8 @@ const BUILTIN_CHANTS = [
 const BUILTIN_MOODS = ['平靜', '歡喜', '感恩', '煩躁', '焦慮', '疲累', '低落'];
 const FOUR_ITS = ['面對它', '接受它', '處理它', '放下它'];
 const SIT_METHODS = ['數息', '默照', '念佛', '其他'];
-const DEFAULT_DEDICATION = '願以此功德　莊嚴佛淨土\n上報四重恩　下濟三途苦\n若有見聞者　悉發菩提心\n盡此一報身　同生極樂國';
+const OLD_DEDICATION = '願以此功德　莊嚴佛淨土\n上報四重恩　下濟三途苦\n若有見聞者　悉發菩提心\n盡此一報身　同生極樂國';
+const DEFAULT_DEDICATION = '願以此功德　回向諸眾生\n解脫三界苦　皆發菩提心'; // 課誦本的回向偈（新Q11）
 const BEADS = 108;
 const VOICE_MODES = [['both', '錄音＋轉文字'], ['text', '只轉文字'], ['audio', '只錄音']];
 
@@ -167,13 +176,25 @@ let settings = null;
 async function loadSettings() {
   settings = Object.assign({
     dedication: DEFAULT_DEDICATION, startDate: '', customSutras: [], customChants: [], customMoods: [],
+    showDiamond: false, setOrder: null,
   }, await kvGet('settings', {}));
+  if (settings.dedication === OLD_DEDICATION) settings.dedication = DEFAULT_DEDICATION; // 沒改過的舊預設換成課誦本的
 }
 const saveSettings = () => kvSet('settings', settings);
-const sutraItems = () => [...BUILTIN_SUTRAS, ...settings.customSutras];
+const allSutraItems = () => [...BUILTIN_SUTRAS, ...settings.customSutras];
+const sutraItems = () => allSutraItems().filter(s => !s.hidden || (s.id === 'diamond' && settings.showDiamond));
+/** 功課順序：[{id, on}]；新加入的自訂經典排在最後、預設不念（新Q20） */
+function setOrder() {
+  const base = settings.setOrder || BUILTIN_SUTRAS.filter(s => !s.hidden).map(s => ({ id: s.id, on: true }));
+  const ids = new Set(sutraItems().map(s => s.id));
+  const out = base.filter(x => ids.has(x.id));
+  sutraItems().forEach(s => { if (!out.some(x => x.id === s.id)) out.push({ id: s.id, on: false }); });
+  return out;
+}
+const setItems = () => setOrder().filter(x => x.on).map(x => sutraItems().find(s => s.id === x.id)).filter(Boolean);
 const chantItems = () => [...BUILTIN_CHANTS, ...settings.customChants];
 const moodList = () => [...BUILTIN_MOODS, ...settings.customMoods];
-const findItem = id => [...sutraItems(), ...chantItems()].find(i => i.id === id);
+const findItem = id => [SET_ITEM, ...allSutraItems(), ...chantItems()].find(i => i.id === id);
 const counted = rec => !settings.startDate || dayKey(rec.at) >= settings.startDate;
 
 /* ---------- 畫面共用 ---------- */
@@ -258,9 +279,49 @@ function strike(t0) {
     o.connect(v).connect(ctx.destination); o.start(t0); o.stop(t0 + dur + .05);
   });
 }
-function bells(n = 1) {
-  const ctx = audio(); const t = ctx.currentTime + .05;
+function bells(n = 1, delay = 0) {
+  const ctx = audio(); const t = ctx.currentTime + .05 + delay;
   for (let i = 0; i < n; i++) strike(t + i * 2.4);
+}
+
+/* ---------- 打坐流水聲（新Q6）：Wikimedia Commons 公有領域的淺溪錄音，頭尾交疊成無縫循環 ---------- */
+let waterBuf = null, waterSrc = null, waterGain = null;
+const waterLevel = v => Math.max(0.001, (v / 100) * 0.7); // 滑桿 0～100 → 音量
+function seamless(ctx, b, fadeSec) {
+  const F = Math.floor(fadeSec * b.sampleRate), L = b.length - F;
+  const out = ctx.createBuffer(b.numberOfChannels, L, b.sampleRate);
+  for (let ch = 0; ch < b.numberOfChannels; ch++) {
+    const src = b.getChannelData(ch), dst = out.getChannelData(ch);
+    dst.set(src.subarray(0, L));
+    for (let i = 0; i < F; i++) { const x = i / F; dst[i] = src[i] * Math.sqrt(x) + src[L + i] * Math.sqrt(1 - x); }
+  }
+  return out;
+}
+async function startWater(vol) {
+  try {
+    const ctx = audio();
+    if (!waterBuf) {
+      const ab = await (await fetch('assets/river.ogg')).arrayBuffer();
+      waterBuf = seamless(ctx, await ctx.decodeAudioData(ab), 1.5);
+    }
+    stopWater(0);
+    waterGain = ctx.createGain();
+    waterGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    waterGain.gain.exponentialRampToValueAtTime(waterLevel(vol), ctx.currentTime + 2);
+    waterSrc = ctx.createBufferSource(); waterSrc.buffer = waterBuf; waterSrc.loop = true;
+    waterSrc.connect(waterGain).connect(ctx.destination); waterSrc.start();
+    return true;
+  } catch (e) { toast('流水聲無法播放：' + (e.message || e.name)); return false; }
+}
+function setWaterVol(v) { if (waterGain) waterGain.gain.setTargetAtTime(waterLevel(v), audio().currentTime, 0.1); }
+function stopWater(sec = 3) {
+  if (!waterSrc) return;
+  const ctx = audio(), g = waterGain, s = waterSrc, now = ctx.currentTime;
+  waterSrc = null; waterGain = null;
+  if (sec > 0) {
+    g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now); g.gain.linearRampToValueAtTime(0, now + sec);
+    s.stop(now + sec + 0.1);
+  } else s.stop();
 }
 
 /* ---------- 路由 ---------- */
@@ -304,7 +365,7 @@ async function renderHome() {
     if (l.type === 'sit') sitMin += l.minutes || 0;
     else tot[l.itemId] = (tot[l.itemId] || 0) + (l.count || 0);
   });
-  const totalLines = [...sutraItems(), ...chantItems()].filter(i => tot[i.id]).map(i =>
+  const totalLines = [SET_ITEM, ...allSutraItems(), ...chantItems()].filter(i => tot[i.id]).map(i =>
     `<div class="stat"><b>${fmtNum(tot[i.id])}</b><span>${esc(i.name)}（${esc(i.unit)}）${i.unit === '聲' && tot[i.id] >= BEADS ? `・${Math.floor(tot[i.id] / BEADS)} 串` : ''}</span></div>`).join('');
 
   const testing = !settings.startDate
@@ -382,22 +443,57 @@ function daySummary(key, logs, diary) {
 }
 
 /* ---------- 念經 ---------- */
+// 經文裡的（合掌）（三稱）這類提示，用灰色小字（新Q14）
+// 以全形空白分開的句子（課誦本的寫法）不在句子中間換行
+const hintHtml = s => {
+  const parts = s.split('　'), hint = x => esc(x).replace(/（[^（）]*）/g, m => `<span class="hint">${m}</span>`);
+  return parts.map(ph => parts.length > 1 && ph.replace(/（[^）]*）/g, '').length <= 14 ? `<span class="ph">${hint(ph)}</span>` : hint(ph)).join('　');
+};
+function sutraBody(s) {
+  const t = s.text && window.SUTRA_TEXTS?.[s.text];
+  if (!t) return `<h2>${esc(s.name)}</h2><p class="muted">這部沒有內建經文，請用自己的經本念。</p>`;
+  return `<h2>${esc(t.title)}</h2>${t.translator ? `<div class="by">${esc(t.translator)}</div>` : ''}
+    <div class="${s.text === 'dabei' ? 'mantra' : ''}">${t.paragraphs.map(p => `<p${p.includes('（') ? ' class="has-hint"' : ''}>${hintHtml(p)}</p>`).join('')}</div>`;
+}
+function sutraSource(t) {
+  return `經文依據：${esc(t.source)}${t.cbeta ? '（CBETA 中華電子佛典協會，CC BY-NC-SA 3.0 TW）' : ''}。${t.note ? `<br>附註：${esc(t.note)}` : ''}`;
+}
+async function fontButtons() {
+  const size = await kvGet('fontSize', 20);
+  return { size, html: `<button class="btn" data-fs="-2" aria-label="字變小">A−</button><button class="btn" data-fs="2" aria-label="字變大">A＋</button>` };
+}
+
 async function renderSutra(id) {
+  if (id === 'set') return renderSet();
   if (id) return renderSutraReader(id);
   setTitle('念經');
   const logs = (await dbAll('logs')).filter(counted);
   const tot = {}, todayN = {};
-  logs.filter(l => l.type === 'sutra').forEach(l => {
+  logs.filter(l => l.type === 'sutra' || l.type === 'set').forEach(l => {
     tot[l.itemId] = (tot[l.itemId] || 0) + l.count;
     if (dayKey(l.at) === todayKey()) todayN[l.itemId] = (todayN[l.itemId] || 0) + l.count;
   });
-  view.innerHTML = `<div class="card"><ul class="list">${sutraItems().map(s => `
+  const run = await kvGet('setRun', null);
+  const items = setItems();
+  const runName = run && items.find(i => i.id === run.at)?.name;
+  view.innerHTML = `
+    <div class="card">
+      <h2>📿 整套功課</h2>
+      <p class="small muted" style="margin-top:0">${items.length ? items.map(i => esc(i.name)).join(' → ') : '（還沒有勾選任何一項，請到 ⚙ 設定 →「功課內容與順序」）'}</p>
+      ${runName ? `<p class="small" style="margin:0 0 8px">⏸ 上次念到「${esc(runName)}」</p>` : ''}
+      <button class="btn primary big" data-a="set" ${items.length ? '' : 'disabled'}>${runName ? '繼續功課' : '開始功課'}</button>
+      <p class="small muted" style="margin-bottom:0">累積完整功課 ${fmtNum(tot.set || 0)} 次${todayN.set ? `・今天 ${todayN.set} 次` : ''}。順序可以在 ⚙ 設定 →「功課內容與順序」調整。</p>
+    </div>
+    <div class="card"><h2>單念一部</h2><ul class="list">${sutraItems().map(s => `
     <li><button class="item-btn" data-id="${esc(s.id)}">
-      <span><span class="name">${esc(s.name)}</span><br><span class="sub">${s.text && window.SUTRA_TEXTS?.[s.text] ? '有經文' : '自訂'}${todayN[s.id] ? `・今天 ${todayN[s.id]} ${esc(s.unit)}` : ''}</span></span>
-      <span class="sub">累積 ${fmtNum(tot[s.id] || 0)} ${esc(s.unit)} ›</span>
+      <span><span class="name">${esc(s.name)}</span><br><span class="sub">${s.part ? '功課的一部分（單念不記遍數）' : s.text && window.SUTRA_TEXTS?.[s.text] ? '有經文' : '自訂'}${todayN[s.id] ? `・今天 ${todayN[s.id]} ${esc(s.unit)}` : ''}</span></span>
+      <span class="sub">${s.part ? '' : `累積 ${fmtNum(tot[s.id] || 0)} ${esc(s.unit)} `}›</span>
     </button></li>`).join('')}</ul></div>
     <p class="muted small">要加其他經典：右上角 ⚙ 設定 →「自訂經典」。</p>`;
-  view.onclick = e => { const b = e.target.closest('.item-btn'); if (b) location.hash = `sutra/${encodeURIComponent(b.dataset.id)}`; };
+  view.onclick = e => {
+    if (e.target.closest('[data-a="set"]')) { location.hash = 'sutra/set'; return; }
+    const b = e.target.closest('.item-btn'); if (b) location.hash = `sutra/${encodeURIComponent(b.dataset.id)}`;
+  };
 }
 
 async function renderSutraReader(id) {
@@ -406,27 +502,21 @@ async function renderSutraReader(id) {
   if (!s) { location.hash = 'sutra'; return; }
   setTitle(s.name);
   const t = s.text && window.SUTRA_TEXTS?.[s.text];
-  const size = await kvGet('fontSize', 20);
-  const textHtml = t ? `
-    <div class="sutra-text ${s.text === 'dabei' ? 'mantra' : ''}" id="stext" style="font-size:${size}px">
-      <h2>${esc(t.title)}</h2><div class="by">${esc(t.translator || '')}</div>
-      ${t.paragraphs.map(p => `<p>${esc(p)}</p>`).join('')}
-    </div>
-    <div class="sutra-src">經文來源：${esc(t.source)}（CBETA 中華電子佛典協會，CC BY-NC-SA 3.0 TW）。尚未依法鼓山課誦本校對。${t.note ? `<br>附註：${esc(t.note)}` : ''}</div>`
-    : `<div class="card muted">這部經沒有內建經文，請用自己的經本念。</div>`;
+  const fb = await fontButtons();
   view.innerHTML = `
     <div class="sutra-head">
       <button class="btn" onclick="location.hash='sutra'">‹ 返回</button>
-      <span class="grow"></span>
-      ${t ? `<button class="btn" data-fs="-2" aria-label="字變小">A−</button><button class="btn" data-fs="2" aria-label="字變大">A＋</button>` : ''}
+      <span class="grow"></span>${t ? fb.html : ''}
     </div>
-    ${textHtml}
+    <div class="sutra-text" id="stext" style="font-size:${fb.size}px">${sutraBody(s)}</div>
+    ${t ? `<div class="sutra-src">${sutraSource(t)}</div>` : ''}
+    ${s.part ? `<p class="small muted" style="text-align:center">這一項是整套功課的一部分，單念不另外記遍數。</p>` : `
     <div class="sticky-bottom">
       <div class="stepper"><button data-st="-1" aria-label="減一">−</button><input id="cnt" type="number" inputmode="numeric" min="1" value="1"><button data-st="1" aria-label="加一">＋</button></div>
       <span class="small muted">${esc(s.unit)}</span>
       <button class="btn primary grow" id="done">完成</button>
-    </div>`;
-  let fs = size;
+    </div>`}`;
+  let fs = fb.size;
   view.onclick = async e => {
     const f = e.target.closest('[data-fs]');
     if (f) { fs = Math.min(36, Math.max(14, fs + Number(f.dataset.fs))); $('#stext').style.fontSize = fs + 'px'; kvSet('fontSize', fs); return; }
@@ -439,6 +529,91 @@ async function renderSutraReader(id) {
       await saveRec('logs', { id: uid(), type: 'sutra', itemId: s.id, name: s.name, unit: s.unit, count: n, dedicated: true, at: new Date().toISOString() });
       toast(`已記錄：${s.name} ${n} ${s.unit} 🙏`);
       $('#cnt').value = 1;
+    }
+  };
+}
+
+/* 整套功課（新Q3、新Q15～新Q17）：一路往下念；念到回向偈按「迴向」；最後按「完成這套功課」才記錄 */
+function askResume(name) {
+  return new Promise(resolve => {
+    const card = openModal(`
+      <h3>上次的功課還沒念完</h3>
+      <p>要從「${esc(name)}」繼續嗎？</p>
+      <div class="modal-actions"><button class="btn" data-a="restart">從頭開始</button><button class="btn primary" data-a="go">繼續</button></div>`);
+    card.onclick = e => { const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return; closeModal(); resolve(a === 'go'); };
+  });
+}
+async function renderSet() {
+  view.onclick = null;
+  const items = setItems();
+  if (!items.length) { toast('功課還沒有勾選任何一項'); location.hash = 'sutra'; return; }
+  setTitle('整套功課');
+  let run = await kvGet('setRun', null);
+  let startIdx = run ? items.findIndex(i => i.id === run.at) : -1;
+  if (run && startIdx > 0 && !await askResume(items[startIdx].name)) { run = null; startIdx = 0; }
+  if (!run) { run = { id: uid(), start: new Date().toISOString(), at: items[0].id, dedicated: false }; startIdx = 0; }
+  if (startIdx < 0) { startIdx = 0; run.at = items[0].id; }
+  await kvSet('setRun', run);
+  const fb = await fontButtons();
+  const srcs = [...new Set(items.map(s => window.SUTRA_TEXTS?.[s.text]?.source).filter(Boolean))];
+  view.innerHTML = `
+    <div class="sutra-head">
+      <button class="btn" data-a="leave">‹ 先離開</button>
+      <span class="grow"></span>${fb.html}
+    </div>
+    <div class="sutra-text" id="stext" style="font-size:${fb.size}px">
+      ${items.map((s, i) => `<section class="set-sec" data-i="${i}">
+        <div class="set-no">${i + 1} / ${items.length}</div>
+        ${sutraBody(s)}
+        ${s.dedication ? `<div class="ded-inline" id="dedBox">${run.dedicated ? '<span class="tag">🙏 已迴向</span>' : '<button class="btn primary" data-a="ded">🙏 迴向</button>'}</div>` : ''}
+      </section>`).join('')}
+      <div class="set-end"><button class="btn primary big" data-a="finish">完成這套功課</button></div>
+    </div>
+    <div class="sutra-src">經文依據：${srcs.map(esc).join('；')}。</div>
+    <div class="sticky-bottom set-bar">
+      <span id="setPos" class="small grow"></span>
+      <button class="btn" data-a="next">下一項 ↓</button>
+    </div>`;
+  keepAwake(true);
+  const secs = $$('.set-sec');
+  let cur = startIdx, saveT = null;
+  const showPos = () => { $('#setPos').textContent = `第 ${cur + 1}/${items.length} 項・${items[cur].name}`; };
+  const onScroll = () => {
+    const line = innerHeight * 0.35;
+    let i = 0;
+    secs.forEach((el, k) => { if (el.getBoundingClientRect().top < line) i = k; });
+    if (i !== cur) {
+      cur = i; showPos();
+      clearTimeout(saveT); saveT = setTimeout(() => { run.at = items[cur].id; kvSet('setRun', run); }, 400);
+    }
+  };
+  showPos();
+  window.addEventListener('scroll', onScroll, { passive: true });
+  pageCleanup = () => { window.removeEventListener('scroll', onScroll); clearTimeout(saveT); keepAwake(false); };
+  if (startIdx > 0) setTimeout(() => secs[startIdx].scrollIntoView(), 60); // route() 會先捲到最上面
+  let fs = fb.size;
+  view.onclick = async e => {
+    const f = e.target.closest('[data-fs]');
+    if (f) { fs = Math.min(36, Math.max(14, fs + Number(f.dataset.fs))); $('#stext').style.fontSize = fs + 'px'; kvSet('fontSize', fs); return; }
+    const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return;
+    if (a === 'leave') { location.hash = 'sutra'; return; }
+    if (a === 'next') { const nx = secs[Math.min(cur + 1, secs.length - 1)]; (cur + 1 < secs.length ? nx : $('.set-end')).scrollIntoView({ behavior: 'smooth' }); return; }
+    if (a === 'ded') {
+      run.dedicated = true; await kvSet('setRun', run);
+      $('#dedBox').innerHTML = '<span class="tag">🙏 已迴向</span>'; toast('已迴向 🙏'); return;
+    }
+    if (a === 'finish') {
+      if (cur < items.length - 1 && !confirm('還沒念到最後一項，確定完成這套功課？')) return;
+      if (!run.dedicated && !await dedicate('整套功課')) return;
+      const at = new Date().toISOString();
+      await saveRec('logs', { id: uid(), type: 'set', itemId: 'set', name: SET_ITEM.name, unit: SET_ITEM.unit, count: 1, items: items.map(i => i.id), setId: run.id, dedicated: true, at });
+      // 記遍數的經典各加一遍（新Q16）
+      for (const s of items.filter(i => !i.part)) {
+        await saveRec('logs', { id: uid(), type: 'sutra', itemId: s.id, name: s.name, unit: s.unit, count: 1, setId: run.id, dedicated: true, at });
+      }
+      await kvDel('setRun');
+      toast('完成一套功課 🙏');
+      location.hash = 'sutra';
     }
   };
 }
@@ -519,7 +694,7 @@ async function renderSit() {
   clearInterval(sitTimer);
   const run = await kvGet('sitRun', null);
   if (run) return renderSitting(run);
-  const p = Object.assign({ mode: 'down', minutes: 20, interval: false, intervalMin: 10 }, await kvGet('sitPrefs', {}));
+  const p = Object.assign({ mode: 'down', minutes: 20, interval: false, intervalMin: 10, water: false, waterVol: 50 }, await kvGet('sitPrefs', {}));
   const logs = (await dbAll('logs')).filter(l => l.type === 'sit' && counted(l)).sort((a, b) => b.at.localeCompare(a.at));
   view.innerHTML = `
     <div class="card">
@@ -538,6 +713,10 @@ async function renderSit() {
       <h2 style="margin-top:16px">中間提醒鐘</h2>
       <div class="row"><label class="switch"><input type="checkbox" id="intOn" ${p.interval ? 'checked' : ''}> 開啟</label>
         <span class="row" style="gap:6px">每 <input type="number" inputmode="numeric" min="1" id="intMin" value="${p.intervalMin}" class="num-in"> 分鐘敲一聲</span></div>
+      <h2 style="margin-top:16px">流水聲</h2>
+      <div class="row"><label class="switch"><input type="checkbox" id="waterOn" ${p.water ? 'checked' : ''}> 🌊 播放溪流水聲</label>
+        <button class="btn" id="waterTry">試聽</button></div>
+      <label class="row small" style="gap:8px;margin-top:6px">音量 <input type="range" id="waterVol" min="5" max="100" value="${p.waterVol}" class="grow"></label>
       <div class="timer"><div class="clock" id="preview"></div></div>
       <button class="btn primary big" id="start">開始（引磬三聲）</button>
     </div>
@@ -554,15 +733,26 @@ async function renderSit() {
     $$('#presets .chip').forEach(b => b.classList.toggle('on', Number(b.dataset.min) === p.minutes && !$('#customMin').value));
   };
   refresh();
+  let trying = false;
+  pageCleanup = () => { if (trying) stopWater(0.5); };
+  $('#waterVol').oninput = e => { p.waterVol = Number(e.target.value); setWaterVol(p.waterVol); };
   view.onclick = async e => {
     const md = e.target.closest('[data-mode]'); if (md) { p.mode = md.dataset.mode; refresh(); }
     const pm = e.target.closest('[data-min]'); if (pm) { p.minutes = Number(pm.dataset.min); $('#customMin').value = ''; refresh(); }
+    if (e.target.id === 'waterTry') {
+      if (trying) { stopWater(1); trying = false; e.target.textContent = '試聽'; }
+      else if (await startWater(p.waterVol)) { trying = true; e.target.textContent = '停止試聽'; }
+      return;
+    }
     if (e.target.id === 'start') {
       p.interval = $('#intOn').checked;
       p.intervalMin = Math.max(1, parseInt($('#intMin').value, 10) || 10);
+      p.water = $('#waterOn').checked;
       if (p.mode === 'down' && !(p.minutes > 0)) { toast('請選時間'); return; }
       await kvSet('sitPrefs', p);
-      const r = { start: Date.now(), mode: p.mode, minutes: p.minutes, interval: p.interval, intervalMin: p.intervalMin, rung: 0 };
+      const r = { start: Date.now(), mode: p.mode, minutes: p.minutes, interval: p.interval, intervalMin: p.intervalMin, rung: 0, water: p.water, waterVol: p.waterVol };
+      trying = false;
+      if (p.water) await startWater(p.waterVol); else stopWater(0.5);
       bells(3);
       await kvSet('sitRun', r);
       renderSitting(r);
@@ -585,8 +775,13 @@ function renderSitting(r) {
     <div class="sitting">
       <div class="small">${r.mode === 'down' ? `倒數 ${r.minutes} 分` : '正數'}${r.interval ? `・每 ${r.intervalMin} 分提醒` : ''}</div>
       <div class="clock" id="clock"></div>
+      ${r.water ? `<label class="row small water-ctl">🌊 <input type="range" id="waterVol2" min="5" max="100" value="${r.waterVol}" aria-label="流水聲音量"></label>` : ''}
       <button class="btn" id="stop">${r.mode === 'down' ? '提前下坐' : '下坐'}</button>
     </div>`;
+  if (r.water) {
+    if (!waterSrc) startWater(r.waterVol); // 重新打開 App 時接著播（被瀏覽器擋住的話，動一下音量就會播）
+    $('#waterVol2').oninput = e => { r.waterVol = Number(e.target.value); if (!waterSrc) startWater(r.waterVol); else setWaterVol(r.waterVol); kvSet('sitRun', r); };
+  }
   let finished = false;
   const tick = () => {
     const el = (Date.now() - r.start) / 1000;
@@ -607,7 +802,9 @@ function renderSitting(r) {
   };
   async function finish(sec, ring) {
     clearInterval(sitTimer);
-    if (ring) bells(3);
+    const fade = waterSrc ? 3 : 0; // 流水聲先 3 秒淡出，再響引磬
+    stopWater(fade);
+    if (ring) bells(3, fade);
     keepAwake(false);
     const minutes = Math.round(sec / 60 * 10) / 10;
     const info = await sitForm(minutes);
@@ -720,6 +917,8 @@ async function renderDiaryForm(id) {
     b.classList.toggle('primary', recording);
   };
   const note = msg => { const el = $('#interim'); if (el) el.textContent = msg; };
+  const micErr = e => ({ NotAllowedError: '麥克風權限沒有允許。', NotFoundError: '找不到麥克風。', NotReadableError: '麥克風被別的 App 佔用中（例如通話、錄音）。' }[e.name]
+    || '無法使用麥克風：' + (e.message || e.name));
   const appendText = t => {
     t = t.trim(); if (!t) return;
     const v = txt.value;
@@ -748,8 +947,35 @@ async function renderDiaryForm(id) {
     recog.onend = () => { if (recording && !recogFailed) { try { recog.start(); } catch (_) { /* 已在跑 */ } } };
     try { recog.start(); } catch (e) { note('轉文字無法開始：' + e.message); }
   };
+  // 10/21：Justin 從主畫面 App 按了沒反應、也沒跳權限視窗 → 一按就顯示狀態，卡住或被封鎖時說明怎麼開
+  const MIC_HELP = '請打開麥克風權限：用 Chrome 開 justin-n8n.github.io/xiuxing → 網址列左邊的圖示 → 權限 → 麥克風 →「允許」。'
+    + '如果還是不行：手機的「設定 → 應用程式 → Chrome → 權限 → 麥克風」也要允許。改完把這個 App 關掉重開。';
+  const micFail = msg => {
+    const el = $('#interim'); if (el) el.innerHTML = `<div class="mic-help">⚠️ ${esc(msg)}<br>${esc(MIC_HELP)}</div>`;
+  };
+  let starting = false;
   const startVoice = async () => {
+    if (starting) return;
     if (vmode !== 'text' && audioBlob && !confirm('要重錄嗎？原本的錄音會被取代。')) return;
+    if (!navigator.mediaDevices?.getUserMedia) { micFail('這個瀏覽器不能使用麥克風。'); return; }
+    try { // 已經被封鎖的話，Chrome 不會再跳視窗，直接說明
+      const st = await navigator.permissions?.query({ name: 'microphone' });
+      if (st?.state === 'denied') { micFail('麥克風權限被封鎖了，所以不會跳出詢問視窗。'); return; }
+    } catch (_) { /* 有些瀏覽器不支援查詢，直接試 */ }
+    starting = true;
+    const b = $('#micBtn'); if (b) { b.textContent = '⏳ 正在開啟麥克風…'; b.disabled = true; }
+    note('正在開啟麥克風…（如果跳出詢問，請按「允許」）');
+    const slow = setTimeout(() => {
+      if (!starting) return;
+      starting = false; if (b) { b.disabled = false; b.textContent = '🎤 再試一次'; }
+      micFail('5 秒了麥克風還沒有回應，可能是權限視窗沒有顯示出來。');
+    }, 5000);
+    const done = () => { starting = false; clearTimeout(slow); if (b) b.disabled = false; setMicUi(); };
+    if (vmode === 'text') {
+      // 只轉文字：先拿一次麥克風權限（拿到就放掉），才知道權限有沒有問題
+      try { const s0 = await navigator.mediaDevices.getUserMedia({ audio: true }); s0.getTracks().forEach(t => t.stop()); }
+      catch (e) { done(); micFail(micErr(e)); return; }
+    }
     if (vmode !== 'text') {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -762,8 +988,9 @@ async function renderDiaryForm(id) {
           stream.getTracks().forEach(t => t.stop()); stream = null; showAudio();
         };
         recorder.start(1000);
-      } catch (e) { toast('無法使用麥克風：' + (e.message || e.name)); return; }
+      } catch (e) { done(); micFail(micErr(e)); return; }
     }
+    done();
     recording = true; setMicUi(); note('請說…');
     if (vmode !== 'audio') startRecog();
     keepAwake(true);
@@ -821,6 +1048,15 @@ async function renderSettings() {
       <div class="row" style="margin-top:8px"><button class="btn" id="dedReset">恢復預設</button><button class="btn primary" id="dedSave">儲存</button></div>
     </div>
     <div class="card">
+      <h2>功課內容與順序</h2>
+      <p class="small muted" style="margin-top:0">勾選「整套功課」要念哪幾項，用 ↑ ↓ 調整順序。自訂經典加入後會出現在最下面（預設不勾）。</p>
+      <ul class="list" id="setOrder">${setOrder().map((x, i, arr) => { const s = sutraItems().find(y => y.id === x.id); return `
+        <li class="row" style="padding:6px 0"><label class="switch grow" style="margin:0"><input type="checkbox" data-son="${esc(x.id)}" ${x.on ? 'checked' : ''}> ${esc(s.name)}</label>
+          <button class="btn" data-mv="${i}:-1" ${i ? '' : 'disabled'} aria-label="往上">↑</button><button class="btn" data-mv="${i}:1" ${i < arr.length - 1 ? '' : 'disabled'} aria-label="往下">↓</button></li>`; }).join('')}</ul>
+      <div class="row" style="margin-top:8px"><button class="btn" id="setReset">恢復課誦本順序</button></div>
+      <label class="switch" style="margin-top:12px"><input type="checkbox" id="showDiamond" ${settings.showDiamond ? 'checked' : ''}> 顯示金剛經（CBETA 版，可單念、可加進功課）</label>
+    </div>
+    <div class="card">
       <h2>正式啟用日</h2>
       <p class="small muted" style="margin-top:0">三段全部做完後再填。填了以後，首頁和累積只算這天以後的紀錄（之前的測試紀錄保留，不會刪）。</p>
       <div class="row"><input type="date" id="startDate" value="${esc(settings.startDate)}" style="max-width:12em"><button class="btn" id="startSave">儲存</button></div>
@@ -857,9 +1093,20 @@ async function renderSettings() {
       <p class="small muted" style="margin-top:0">還沒開雲端同步前，資料只存在這支手機，建議每週匯出一次，存到雲端硬碟的私人資料夾（不要放進專案資料夾）。備份檔不含錄音。</p>
       <div class="row"><button class="btn primary" id="export">匯出備份</button><label class="btn" style="display:inline-flex;align-items:center">匯入備份<input type="file" id="import" accept="application/json,.json" hidden></label></div>
     </div>
-    <p class="small muted">修行紀錄 v${APP_VERSION}・34.修行紀錄App。經文來源：CBETA 中華電子佛典協會（CC BY-NC-SA 3.0 TW）。</p>`;
+    <p class="small muted">修行紀錄 v${APP_VERSION}・34.修行紀錄App。經文依《佛教朝暮課誦本》與法鼓文化《觀音法門》，僅供個人修行使用；金剛經為 CBETA（CC BY-NC-SA 3.0 TW）。流水聲：Wikimedia Commons 公有領域錄音。</p>`;
 
+  view.onchange = async e => {
+    const son = e.target.dataset?.son;
+    if (son) { const o = setOrder(); o.find(x => x.id === son).on = e.target.checked; settings.setOrder = o; await saveSettings(); return; }
+    if (e.target.id === 'showDiamond') { settings.showDiamond = e.target.checked; await saveSettings(); renderSettings(); }
+  };
   view.onclick = async e => {
+    const mv = e.target.closest('[data-mv]')?.dataset.mv;
+    if (mv) {
+      const [i, d] = mv.split(':').map(Number), o = setOrder();
+      [o[i], o[i + d]] = [o[i + d], o[i]]; settings.setOrder = o; await saveSettings(); renderSettings(); return;
+    }
+    if (e.target.id === 'setReset' && confirm('恢復成課誦本的 9 項與順序？')) { settings.setOrder = null; await saveSettings(); renderSettings(); return; }
     if (e.target.id === 'dedSave') { settings.dedication = $('#ded').value.trim() || DEFAULT_DEDICATION; await saveSettings(); toast('迴向文已儲存'); }
     if (e.target.id === 'dedReset') { $('#ded').value = DEFAULT_DEDICATION; }
     if (e.target.id === 'startSave') { settings.startDate = $('#startDate').value; await saveSettings(); toast(settings.startDate ? `正式啟用日：${settings.startDate}` : '已清除正式啟用日'); }

@@ -116,7 +116,18 @@ body.immersive { padding-bottom: 0; }
 .sutra-text h2 { text-align: center; font-size: 1.3em; margin: .5em 0 0; color: var(--ink); }
 .sutra-text .by { text-align: center; color: var(--muted); font-size: .85em; margin-bottom: 1em; }
 .sutra-text p { margin: 0 0 .8em; }
-.sutra-text.mantra p { margin: 0 0 .3em; }
+.sutra-text .mantra p { display: inline-block; margin: 0 1.1em .2em 0; } /* 大悲咒照書上的樣子：一句接一句，句間空開 */
+.sutra-text .mantra p.has-hint { display: block; }
+.sutra-text .ph { white-space: nowrap; }
+.sutra-text .hint { color: var(--muted); font-size: .72em; font-family: var(--sans); letter-spacing: 0; }
+.set-sec { padding: 4px 0 18px; border-bottom: 1px dashed var(--line); margin-bottom: 14px; scroll-margin-top: 64px; }
+.set-no { text-align: center; color: var(--muted); font-size: .7em; font-family: var(--sans); }
+.ded-inline { text-align: center; margin: 10px 0 4px; font-size: 1rem; font-family: var(--sans); }
+.set-end { text-align: center; padding: 10px 0 30px; font-family: var(--sans); font-size: 1rem; }
+.set-bar { align-items: center; }
+.mic-help { background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; margin-top: 8px; color: var(--ink); line-height: 1.6; }
+.water-ctl { justify-content: center; gap: 8px; margin: 0 0 18px; }
+.water-ctl input { width: 160px; }
 .sutra-src { font-size: .75rem; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 16px; }
 .sticky-bottom {
   position: sticky; bottom: calc(64px + env(safe-area-inset-bottom)); background: var(--bg);
@@ -188,8 +199,6 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 }
 .toast[hidden] { display: none; }
 .empty { text-align: center; color: var(--muted); padding: 30px 0; }
-.sutra-text.mantra { counter-reset: ju; }
-.sutra-text.mantra p::before { counter-increment: ju; content: counter(ju) "　"; color: var(--muted); font-size: .7em; display: inline-block; min-width: 2.2em; }
 .voice { margin-top: 4px; }
 .voice #vmode { margin-top: 8px; }
 .voice #vmode .chip { min-height: 32px; padding: 4px 12px; font-size: .8rem; }
