@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.7.1';
+const APP_VERSION = '0.8.0';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -561,6 +561,8 @@ $('#settingsBtn').onclick = () => { location.hash = 'settings'; };
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 
 /* ---------- 封面（v0.7.0，10/21 封面Q1～Q7）：每天第一次打開先看到禪坐圖、今日法語、打氣話 ---------- */
+// 封面金剛經名言（v0.8.0，Q5～Q7：四句每天輪一句；用 Justin 給的常見寫法）
+const DIAMOND_LINES = ['應無所住，而生其心。', '凡所有相，皆是虛妄。', '一切有為法，如夢幻泡影，如露亦如電，應作如是觀。', '過去心不可得，現在心不可得，未來心不可得。'];
 const dayNo = k => { const [y, m, d] = k.split('-').map(Number); return Math.floor(Date.UTC(y, m - 1, d) / 864e5); };
 function dailyQuote() {
   const qs = window.DAILY_QUOTES || [];
@@ -581,7 +583,8 @@ async function practiceStats() {
     if (l.type === 'sit') { if (dayKey(l.at).startsWith(month)) sitMonth += l.minutes || 0; return; }
     tot[l.itemId] = (tot[l.itemId] || 0) + (l.count || 0);
   });
-  return { streak, total: days.size, todayDone: days.has(today), sitMonth, tot };
+  const thanks = diary.reduce((n, d) => n + (d.thanks?.length || 0), 0);
+  return { streak, total: days.size, todayDone: days.has(today), sitMonth, tot, thanks };
 }
 
 // 打氣話（小輝寫；Q6：平常像好朋友，里程碑那天用「隨喜讚歎」）。{n} 連續天數、{t} 累積天數、{nick} 小名、{fa} 法名
@@ -634,6 +637,7 @@ function cheerFor(st) {
 function cheerFact(st) {
   const facts = [];
   if (st.sitMonth) facts.push(`🧘 這個月打坐共 ${fmtMinutes(st.sitMonth)}`);
+  if (st.thanks) facts.push(`🙏 已經記錄了 ${fmtNum(st.thanks)} 件感恩的事`);
   if (st.tot.set) facts.push(`📿 完整功課已做 ${fmtNum(st.tot.set)} 次`);
   COPY_SUTRAS.forEach(c => { const n = st.tot['copy:' + c.id]; if (n) facts.push(`🖌️ ${c.name}已抄 ${fmtNum(n)} 遍`); });
   ['heart', 'dabei', 'pumen'].forEach(id => { const n = st.tot[id]; if (n) facts.push(`📖 ${findItem(id).name}已念 ${fmtNum(n)} 遍`); });
@@ -652,6 +656,7 @@ async function renderCover() {
       <img class="cover-art" src="monk.svg" alt="小沙彌在蒲團上禪坐">
       <h1 class="cover-name">${esc(settings.myName || '我')}的修行日誌</h1>
       <div class="cover-date">${fmtDay(todayKey())}・${st.streak ? `連續 ${st.streak} 天・` : ''}累積 ${st.total} 天${st.todayDone ? '・今天已修行 ✓' : ''}</div>
+      <div class="cover-card diamond"><div class="cover-label">金剛經</div><p class="cover-quote">${esc(DIAMOND_LINES[dayNo(todayKey()) % DIAMOND_LINES.length])}</p><div class="cover-src">——《金剛般若波羅蜜經》</div></div>
       ${q ? `<div class="cover-card"><div class="cover-label">今日法語</div><p class="cover-quote">${esc(q).replace(/\n/g, '<br>')}</p><div class="cover-src">—— 摘自《聖嚴法師108自在語》</div></div>` : ''}
       <div class="cover-card cheer"><p>${esc(cheerFor(st))}</p>${fact ? `<div class="cover-fact">${esc(fact)}</div>` : ''}</div>
       <button class="btn primary big cover-enter" data-a="enter">進入修行紀錄 🙏</button>
@@ -704,6 +709,7 @@ async function renderHome() {
         <div class="stat"><b>${fmtMinutes(sitMin)}</b><span>打坐</span></div>
         ${totalLines}
         <div class="stat"><b>${diary.length}</b><span>日記（篇）</span></div>
+        <div class="stat"><b>${fmtNum(diary.reduce((n, d) => n + (d.thanks?.length || 0), 0))}</b><span>感恩（件）</span></div>
       </div>
       ${copyProg.length ? `<p class="small muted" style="margin:10px 0 0">🖌️ 抄經進行中：${copyProg.join('、')}</p>` : ''}
     </div>
@@ -760,6 +766,8 @@ function daySummary(key, logs, diary) {
   const parts = Object.values(agg).map(a => `${esc(a.name)} ${fmtNum(a.n)} ${esc(a.unit)}`);
   if (sitN) parts.push(`打坐 ${sitN} 次、共 ${fmtMinutes(sit)}`);
   if (ds.length) parts.push(`日記 ${ds.length} 篇`);
+  const thx = ds.reduce((n, d) => n + (d.thanks?.length || 0), 0);
+  if (thx) parts.push(`感恩 ${thx} 件`);
   return `<div class="chips" style="margin-top:4px">${parts.map(p => `<span class="tag" style="font-size:.9rem">${p}</span>`).join('')}</div>`;
 }
 
@@ -1528,6 +1536,7 @@ async function renderDiary(action, id) {
       <div class="day-head">${fmtDay(k)}・${rs.length} 篇${settings.startDate && k < settings.startDate ? '（測試期間）' : ''}</div>
       ${rs.map(r => `<div class="card">
         ${r.text ? `<div class="entry">${esc(r.text)}</div>` : ''}
+        ${r.thanks?.length ? `<div class="thanks-list"><b>🙏 感恩</b><ol>${r.thanks.map(t => `<li>${esc(t)}</li>`).join('')}</ol></div>` : ''}
         ${r.audio ? `<audio controls preload="none" data-blob="${r.id}" style="width:100%;margin-top:6px"></audio>` : r.audioFileId ? '<div class="small muted">🎧 錄音存在雲端硬碟</div>' : ''}
         <div style="margin-top:6px">${(r.moods || []).map(m => `<span class="tag">${esc(m)}</span>`).join('')}${r.fourIt ? `<span class="tag">🪷 ${esc(r.fourIt)}</span>` : ''}</div>
         <div class="entry-meta"><span>${fmtTime(r.at)}・${r.share ? '🤝 給小輝看' : '🔒 只有自己'}</span>
@@ -1559,6 +1568,9 @@ async function renderDiaryForm(id) {
         <div id="interim" class="small muted"></div>
         <div id="audioBox" class="small"></div>
       </div>
+      <p class="small muted" style="margin:14px 0 6px">🙏 今天感恩的三件事（寫一件也很好）</p>
+      <ol class="thanks-in" id="thanks">${(r.thanks?.length > 3 ? r.thanks : [...(r.thanks || []), '', '', ''].slice(0, 3)).map((t, i) => `<li><input type="text" class="thx" value="${esc(t)}" placeholder="${['例如：家人準備的早餐', '例如：同事幫了一個忙', '例如：今天身體平安'][i] || ''}"></li>`).join('')}</ol>
+      <button class="link-btn" data-a="moreThanks">＋ 再一件</button>
       <p class="small muted" style="margin:14px 0 6px">心情（可複選）</p>
       <div class="chips" id="moods">${moodList().map(m => `<button class="chip ${r.moods.includes(m) ? 'on' : ''}" data-mood="${esc(m)}">${esc(m)}</button>`).join('')}</div>
       <p class="small muted" style="margin:14px 0 6px">四它：這件事我正在…</p>
@@ -1691,12 +1703,14 @@ async function renderDiaryForm(id) {
     if (f) { r.fourIt = r.fourIt === f.dataset.four ? '' : f.dataset.four; $$('#four .chip').forEach(b => b.classList.toggle('on', b.dataset.four === r.fourIt)); return; }
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (a === 'rmAudio' && confirm('刪除這段錄音？')) { audioBlob = null; audioChanged = true; showAudio(); return; }
+    if (a === 'moreThanks') { $('#thanks').insertAdjacentHTML('beforeend', '<li><input type="text" class="thx"></li>'); $('#thanks li:last-child input').focus(); return; }
     if (a === 'cancel') { stopVoice(); history.back(); return; }
     if (e.target.id === 'save') {
       stopVoice();
       await new Promise(res => setTimeout(res, 300)); // 等錄音收尾
       r.text = txt.value.trim(); r.share = $('#share').checked;
-      if (!r.text && !audioBlob) { toast('還沒有寫內容或錄音'); return; }
+      r.thanks = $$('#thanks .thx').map(i => i.value.trim()).filter(Boolean); // 空的不存（Q2）
+      if (!r.text && !audioBlob && !r.thanks.length) { toast('還沒有寫內容、感恩或錄音'); return; }
       if (audioChanged) { r.audio = audioBlob; r.audioFileId = ''; }
       await saveRec('diary', r);
       if (!old) await kvDel('diaryDraft');

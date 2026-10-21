@@ -257,3 +257,12 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 .cover-fact { font-size: .88rem; color: var(--muted); margin-top: 6px; }
 .cover-enter { margin-top: 6px; }
 .book-sign { text-align: center; font-family: var(--serif); color: var(--muted); margin: -8px 0 14px; letter-spacing: .2em; }
+
+/* 感恩的事（v0.8.0） */
+.thanks-in { margin: 0; padding-left: 1.6em; }
+.thanks-in li { margin-bottom: 6px; }
+.thanks-in input { width: 100%; }
+.thanks-list { margin-top: 6px; font-size: .92rem; }
+.thanks-list ol { margin: 2px 0 0; padding-left: 1.6em; }
+.cover-card.diamond { text-align: center; }
+.cover-card.diamond .cover-src { text-align: center; }
