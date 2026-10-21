@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.5.0';
 
 /* ---------- 預設內容 ---------- */
 // 依課誦本的順序（v0.3.0，10/21 新Q3）；part：只在功課裡念、不另記遍數（新Q4）；hidden：預設隱藏（新Q2）
@@ -382,7 +382,7 @@ async function renderHome() {
     `<div class="stat"><b>${fmtNum(tot[i.id])}</b><span>${esc(i.name)}（${esc(i.unit)}）${i.unit === '聲' && tot[i.id] >= BEADS ? `・${Math.floor(tot[i.id] / BEADS)} 串` : ''}</span></div>`).join('');
 
   const copyProg = [];
-  for (const c of COPY_SUTRAS) { const r = await getCopyRun(c.id); if (r.page || r.strokes.length) copyProg.push(`${c.name} 第 ${r.page + 1}/${copyCells(c).length} 頁`); }
+  for (const c of COPY_SUTRAS) { const r = await getCopyRun(c.id); if (copyStarted(r)) copyProg.push(`${c.name} 第 ${r.page + 1}/${copyCells(c).length} 頁`); }
   const testing = !settings.startDate
     ? `<div class="banner">🧪 目前是<b>測試期間</b>：三段全部做完後，到設定填「正式啟用日」，累積就從那天算起。</div>` : '';
 
@@ -860,7 +860,7 @@ function sitForm(minutes) {
   });
 }
 
-/* ---------- 抄經（v0.4.0，新Q7、新Q19～新Q26）：直書描紅、10×10 田字格、觸控筆寫、每頁存圖 ---------- */
+/* ---------- 抄經（v0.5.0，10/21 第三次 grill-me Q1～Q11）：一次寫一個大字，寫好的字放進上方整頁 ---------- */
 const COPY_SUTRAS = [
   { id: 'heart', name: '心經', text: 'heart', upto: '菩提薩婆訶' },   // 經後的「摩訶般若波羅蜜多（三稱）」不抄
   { id: 'dabei', name: '大悲咒', text: 'dabei', after: '（三遍）' },  // 咒前的「南無大悲觀世音菩薩」不抄
@@ -870,7 +870,7 @@ const COPY_SUTRAS = [
 const COPY_ITEMS = COPY_SUTRAS.map(c => ({ id: 'copy:' + c.id, name: '抄經・' + c.name, unit: '遍' }));
 const GRID = 10;                 // 每頁 10 行 × 10 字
 const INKS = { black: '#222222', red: '#b8322a' };
-const PAPER = '#fffdf6', GRID_RED = '#d39a90', GUIDE = '#c9c4bc';
+const PAPER = '#fffdf6', GRID_RED = '#d39a90', GUIDE = '#c9c4bc', CUR = '#9a6a2f';
 
 /** 把經文排成格子：經題一行（太長就兩行），接著正文；句號、逗號不佔格，記在前一個字上 */
 const copyCache = {};
@@ -891,54 +891,65 @@ function copyCells(c) {
   return (copyCache[c.id] = pages);
 }
 const copyRunKey = id => 'copyRun:' + id;
-const getCopyRun = async id => Object.assign({ round: 1, page: 0, strokes: [], pendingDed: false }, await kvGet(copyRunKey(id), {}));
+/** 進度：round 第幾遍、page 第幾頁、chars 這頁寫好的字 {格子: 筆畫}、drafts 還沒按 ✓ 的字 */
+async function getCopyRun(id) {
+  const r = Object.assign({ round: 1, page: 0, chars: {}, drafts: {}, pos: null, pendingDed: false }, await kvGet(copyRunKey(id), {}));
+  delete r.strokes; // v0.4.0 整頁描的草稿不再使用
+  return r;
+}
+const copyStarted = r => r.page > 0 || Object.keys(r.chars).length > 0;
+const copyDone = r => Object.keys(r.chars).length;
 
 let fontReady = null;
 function loadCopyFont() {
   if (!fontReady) fontReady = document.fonts.load('48px CopyKai', '觀').catch(() => {});
   return fontReady;
 }
+const serifFallback = () => getComputedStyle(document.documentElement).getPropertyValue('--serif'); // 字型裡沒有的字（例如「嘇」）用明體補
 
-/** 畫字帖底稿：田字格＋淡灰經文（直書，由右到左） */
-function drawSheet(ctx, size, cells, guide = GUIDE) {
-  const cell = size / GRID;
-  ctx.fillStyle = PAPER; ctx.fillRect(0, 0, size, size);
-  ctx.strokeStyle = GRID_RED; ctx.lineWidth = Math.max(1, size / 500);
+/** 田字格：外框實線、十字虛線 */
+function drawCellGrid(ctx, x, y, s, lw) {
+  ctx.strokeStyle = GRID_RED; ctx.lineWidth = lw; ctx.setLineDash([]);
+  ctx.strokeRect(x, y, s, s);
+  ctx.lineWidth = lw / 2; ctx.setLineDash([s / 14, s / 14]);
+  ctx.beginPath(); ctx.moveTo(x + s / 2, y); ctx.lineTo(x + s / 2, y + s); ctx.moveTo(x, y + s / 2); ctx.lineTo(x + s, y + s / 2); ctx.stroke();
   ctx.setLineDash([]);
-  for (let i = 0; i <= GRID; i++) {
-    ctx.beginPath(); ctx.moveTo(i * cell, 0); ctx.lineTo(i * cell, size); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, i * cell); ctx.lineTo(size, i * cell); ctx.stroke();
-  }
-  ctx.lineWidth = Math.max(.5, size / 1000); ctx.setLineDash([cell / 14, cell / 14]);
-  for (let i = 0; i < GRID; i++) {
-    ctx.beginPath(); ctx.moveTo((i + .5) * cell, 0); ctx.lineTo((i + .5) * cell, size); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, (i + .5) * cell); ctx.lineTo(size, (i + .5) * cell); ctx.stroke();
-  }
-  ctx.setLineDash([]);
-  ctx.fillStyle = guide; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const fallback = getComputedStyle(document.documentElement).getPropertyValue('--serif'); // 字型裡沒有的字（例如「嘇」）用明體補
-  cells.forEach((c, i) => {
-    if (!c) return;
-    const col = Math.floor(i / GRID), row = i % GRID;
-    const x = size - (col + .5) * cell, y = (row + .5) * cell;
-    ctx.font = `${cell * .8}px CopyKai, ${fallback}`;
-    ctx.fillText(c.ch, x, y + cell * .03);
-    if (c.p) { ctx.font = `${cell * .34}px CopyKai, serif`; ctx.fillText(c.p, x + cell * .42, y + cell * .36); }
-  });
 }
-function drawStrokes(ctx, size, strokes) {
+function drawGlyph(ctx, ch, x, y, s, color) {
+  ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `${s * .8}px CopyKai, ${serifFallback()}`;
+  ctx.fillText(ch, x + s / 2, y + s * .53);
+}
+/** 筆畫存成 0～1 的座標（相對於那個字的格子），畫到任何大小的格子都一樣比例 */
+function drawStrokes(ctx, x, y, s, strokes) {
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  strokes.forEach(s => {
-    ctx.strokeStyle = INKS[s.c] || INKS.black;
-    for (let i = 1; i < s.p.length; i++) {
-      const [x0, y0, p0] = s.p[i - 1], [x1, y1, p1] = s.p[i];
-      ctx.lineWidth = penWidth(size, (p0 + p1) / 2);
-      ctx.beginPath(); ctx.moveTo(x0 * size, y0 * size); ctx.lineTo(x1 * size, y1 * size); ctx.stroke();
+  strokes.forEach(st => {
+    ctx.strokeStyle = ctx.fillStyle = INKS[st.c] || INKS.black;
+    const P = st.p;
+    for (let i = 1; i < P.length; i++) {
+      ctx.lineWidth = penWidth(s, (P[i - 1][2] + P[i][2]) / 2);
+      ctx.beginPath(); ctx.moveTo(x + P[i - 1][0] * s, y + P[i - 1][1] * s); ctx.lineTo(x + P[i][0] * s, y + P[i][1] * s); ctx.stroke();
     }
-    if (s.p.length === 1) { const [x, y, p] = s.p[0]; ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.arc(x * size, y * size, penWidth(size, p) / 2, 0, 7); ctx.fill(); }
+    if (P.length === 1) { ctx.beginPath(); ctx.arc(x + P[0][0] * s, y + P[0][1] * s, penWidth(s, P[0][2]) / 2, 0, 7); ctx.fill(); }
   });
 }
-const penWidth = (size, p) => (size / GRID) * .055 * (.45 + 1.1 * (p || .5));
+const penWidth = (s, p) => s * .055 * (.45 + 1.1 * (p || .5));
+const cellXY = (i, size) => { const c = size / GRID; return [size - (Math.floor(i / GRID) + 1) * c, (i % GRID) * c, c]; }; // 直書：由右到左、由上到下
+
+/** 畫整頁：寫好的格子放手寫字，沒寫的放淡灰字（guide=false 時不畫，存圖用）；cur 是正在寫的格子 */
+function drawPage(ctx, size, cells, chars, { guide = true, cur = -1 } = {}) {
+  ctx.fillStyle = PAPER; ctx.fillRect(0, 0, size, size);
+  const lw = Math.max(1, size / 500);
+  for (let i = 0; i < GRID * GRID; i++) {
+    const [x, y, s] = cellXY(i, size), c = cells[i];
+    drawCellGrid(ctx, x, y, s, lw);
+    if (!c) continue;
+    if (chars[i]) drawStrokes(ctx, x, y, s, chars[i]);
+    else if (guide) drawGlyph(ctx, c.ch, x, y, s, GUIDE);
+    if (c.p) { ctx.fillStyle = chars[i] ? '#8a847b' : GUIDE; ctx.font = `${s * .34}px CopyKai, serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(c.p, x + s * .92, y + s * .86); }
+  }
+  if (cur >= 0) { const [x, y, s] = cellXY(cur, size); ctx.strokeStyle = CUR; ctx.lineWidth = Math.max(2, size / 220); ctx.strokeRect(x + 1, y + 1, s - 2, s - 2); }
+}
 
 /* 抄經首頁 */
 async function renderCopy(id, ...rest) {
@@ -951,12 +962,12 @@ async function renderCopy(id, ...rest) {
   view.innerHTML = `
     <div class="card"><ul class="list">${COPY_SUTRAS.map(c => {
       const pages = copyCells(c).length, r = runs[c.id];
-      const st = r.pendingDed ? `第 ${r.round} 遍抄完了，還沒迴向` : r.page || r.strokes.length ? `第 ${r.round} 遍・寫到第 ${r.page + 1}/${pages} 頁` : `共 ${pages} 頁`;
+      const st = r.pendingDed ? `第 ${r.round} 遍抄完了，還沒迴向` : copyStarted(r) ? `第 ${r.round} 遍・第 ${r.page + 1}/${pages} 頁・這頁寫了 ${copyDone(r)} 字` : `共 ${pages} 頁`;
       return `<li><button class="item-btn" data-id="${c.id}">
         <span><span class="name">${esc(c.name)}</span><br><span class="sub">${st}</span></span>
         <span class="sub">已抄 ${fmtNum(tot['copy:' + c.id] || 0)} 遍 ›</span></button></li>`; }).join('')}</ul></div>
     <button class="btn big" onclick="location.hash='copy/book'">📚 我的抄經本</button>
-    <p class="muted small">平板用觸控筆照著淡灰的字描；手指不會畫到（設定可以打開「手指也能寫」）。每頁寫完按「這頁完成」，下次從沒寫完的那頁接著抄。</p>`;
+    <p class="muted small">一次寫一個大字：寫好按「✓ 寫好了」，字會放進上方的整頁，接著寫下一個字。平板用觸控筆寫，手指不會畫到（設定可以打開「手指也能寫」）。寫到哪裡都會自動存。</p>`;
   view.onclick = async e => {
     const b = e.target.closest('.item-btn'); if (!b) return;
     const c = COPY_SUTRAS.find(x => x.id === b.dataset.id), r = runs[c.id];
@@ -972,13 +983,13 @@ async function finishCopyRound(c, r) {
   }
   await saveRec('logs', { id: uid(), type: 'copy', itemId: 'copy:' + c.id, name: '抄經・' + c.name, unit: '遍', count: 1, round: r.round, dedicated: true, at: new Date().toISOString() });
   const done = r.round;
-  Object.assign(r, { round: r.round + 1, page: 0, strokes: [], pendingDed: false }); // 直接改同一個物件，離開抄經頁時存的才會是新的進度
+  Object.assign(r, { round: r.round + 1, page: 0, chars: {}, drafts: {}, pos: null, pendingDed: false }); // 直接改同一個物件，離開抄經頁時存的才會是新的進度
   await kvSet(copyRunKey(c.id), r);
   toast(`已記錄：抄經・${c.name} 第 ${done} 遍 🙏`);
   return true;
 }
 
-/* 抄經頁：上面工具列、中間字帖、下面按鈕 */
+/* 抄經頁：上方（或右邊）整頁、下方（或左邊）一個大格子 */
 async function renderCopyPage(id) {
   view.onclick = null;
   const c = COPY_SUTRAS.find(x => x.id === id);
@@ -989,103 +1000,158 @@ async function renderCopyPage(id) {
   setTitle('抄經・' + c.name);
   document.body.classList.add('immersive');
   keepAwake(true);
-  const prefs = Object.assign({ ink: 'black' }, await kvGet('copyPrefs', {}));
+  const prefs = Object.assign({ ink: 'black', mode: 'trace' }, await kvGet('copyPrefs', {})); // mode：trace 描紅／copy 臨寫
   view.innerHTML = `
     <div class="copy">
       <div class="copy-bar">
-        <button class="btn" data-a="leave">‹ 先離開</button>
-        <span class="copy-title">${esc(c.name)}・第 ${run.round} 遍・<b id="pg"></b></span>
+        <button class="btn" data-a="leave">‹ 返回</button>
+        <span class="copy-title grow">${esc(c.name)}・第 ${run.round} 遍・<b id="pgNo"></b></span>
+        <button class="btn" data-a="mode" id="modeBtn"></button>
       </div>
-      <div class="copy-stage" id="stage"><canvas id="bg"></canvas><canvas id="ink"></canvas></div>
-      <div class="copy-bar">
-        <button class="btn" data-a="undo" aria-label="上一筆">↶ 上一筆</button>
-        <button class="btn" data-a="eraser" id="eraserBtn">🧽 橡皮擦</button>
-        <button class="btn" data-a="clear">清除這頁</button>
-        <button class="ink-dot" data-ink="black" style="--dot:${INKS.black}" aria-label="黑色墨"></button>
-        <button class="ink-dot" data-ink="red" style="--dot:${INKS.red}" aria-label="朱紅墨"></button>
-        <span class="grow"></span>
-        <button class="btn primary" data-a="done">這頁完成 ✓</button>
+      <div class="copy-main">
+        <div class="copy-sheet" id="sheetBox"><canvas id="sheet" aria-label="整頁，點寫過的字可以重寫"></canvas></div>
+        <div class="copy-write">
+          <div class="copy-boxrow">
+            <div class="copy-box" id="boxWrap"><canvas id="bxbg"></canvas><canvas id="bxink"></canvas></div>
+            <div class="copy-side"><div id="model" class="copy-model"></div><div class="small muted">接下來</div><div id="nextChars" class="copy-next"></div></div>
+          </div>
+          <div class="copy-bar">
+            <button class="btn" data-a="undo">↶ 上一筆</button>
+            <button class="btn" data-a="eraser" id="eraserBtn">🧽 橡皮擦</button>
+            <button class="btn" data-a="clear">清除</button>
+            <button class="ink-dot" data-ink="black" style="--dot:${INKS.black}" aria-label="黑色墨"></button>
+            <button class="ink-dot" data-ink="red" style="--dot:${INKS.red}" aria-label="朱紅墨"></button>
+            <span class="grow"></span><span class="small muted" id="cnt"></span>
+          </div>
+          <div class="copy-bar copy-nav">
+            <button class="btn" data-a="prev">◀ 上一字</button>
+            <button class="btn primary copy-ok" data-a="ok">✓ 寫好了</button>
+            <button class="btn" data-a="next" id="nextBtn">下一字 ▶</button>
+          </div>
+        </div>
       </div>
     </div>`;
-  const stage = $('#stage'), bg = $('#bg'), ink = $('#ink');
-  const bctx = bg.getContext('2d'), ictx = ink.getContext('2d');
-  let size = 0, eraser = false, cur = null, sawPen = false;
+  const sheet = $('#sheet'), bxbg = $('#bxbg'), bxink = $('#bxink');
+  const sctx = sheet.getContext('2d'), bctx = bxbg.getContext('2d'), ictx = bxink.getContext('2d');
+  let cells = pages[run.page], sheetSize = 0, box = 0, eraser = false, cur = null, sawPen = false, strokes = [];
+  const writable = () => cells.map((x, i) => x ? i : -1).filter(i => i >= 0);
+  const frontier = () => writable().find(i => !run.chars[i]) ?? -1; // 第一個還沒寫好的字＝原本寫到的地方
+  if (run.pos == null || !cells[run.pos]) run.pos = frontier();
+  const loadStrokes = () => { strokes = (run.drafts[run.pos] || run.chars[run.pos] || []).map(s => ({ c: s.c, p: s.p.slice() })); };
+  const keepDraft = () => { run.drafts[run.pos] = strokes; };
+  let saveT = null;
+  const save = () => { clearTimeout(saveT); saveT = setTimeout(() => kvSet(copyRunKey(id), run), 300); };
   const fingerOk = () => settings.fingerWrite && !sawPen; // 用過筆以後，手掌（觸控）一律不算
-  const showInk = () => $$('.ink-dot').forEach(b => b.classList.toggle('on', b.dataset.ink === prefs.ink && !eraser));
-  const showPage = () => { $('#pg').textContent = `第 ${run.page + 1}/${pages.length} 頁`; };
-  const redrawInk = () => { ictx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); ictx.clearRect(0, 0, size, size); drawStrokes(ictx, size, run.strokes); };
-  const layout = async () => {
-    const r = stage.getBoundingClientRect();
-    size = Math.floor(Math.min(r.width, r.height));
-    for (const cv of [bg, ink]) { cv.width = size * devicePixelRatio; cv.height = size * devicePixelRatio; cv.style.width = cv.style.height = size + 'px'; }
-    await loadCopyFont();
+
+  const drawSheetNow = () => { sctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); drawPage(sctx, sheetSize, cells, run.chars, { cur: run.pos }); };
+  const drawBox = () => {
     bctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-    drawSheet(bctx, size, pages[run.page]);
+    bctx.fillStyle = PAPER; bctx.fillRect(0, 0, box, box);
+    drawCellGrid(bctx, 1, 1, box - 2, 2);
+    if (prefs.mode === 'trace') drawGlyph(bctx, cells[run.pos].ch, 0, 0, box, GUIDE);
     redrawInk();
   };
-  let saveT = null;
-  const saveDraft = () => { clearTimeout(saveT); saveT = setTimeout(() => kvSet(copyRunKey(id), run), 300); };
-  const pos = e => { const r = ink.getBoundingClientRect(); return [+((e.clientX - r.left) / size).toFixed(4), +((e.clientY - r.top) / size).toFixed(4), e.pointerType === 'pen' ? +(e.pressure || .5).toFixed(2) : .5]; };
-  const eraseAt = ([x, y]) => {
-    const rad = .022, n = run.strokes.length;
-    run.strokes = run.strokes.filter(s => !s.p.some(([a, b]) => Math.hypot(a - x, b - y) < rad));
-    if (run.strokes.length !== n) { redrawInk(); saveDraft(); }
+  const redrawInk = () => { ictx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); ictx.clearRect(0, 0, box, box); drawStrokes(ictx, 0, 0, box, strokes); };
+  const showInfo = () => {
+    const w = writable(), k = w.indexOf(run.pos), ch = cells[run.pos].ch;
+    $('#pgNo').textContent = `第 ${run.page + 1}/${pages.length} 頁`;
+    $('#cnt').textContent = `這頁 ${copyDone(run)}/${w.length} 字`;
+    $('#modeBtn').textContent = prefs.mode === 'trace' ? '描紅 ⇄ 臨寫' : '臨寫 ⇄ 描紅';
+    $('#model').textContent = prefs.mode === 'copy' ? ch : '';
+    // 接下來 4 個字（跨頁也接著看）
+    const all = pages.flat().filter(Boolean), gi = pages.slice(0, run.page).flat().filter(Boolean).length + k;
+    $('#nextChars').textContent = all.slice(gi + 1, gi + 5).map(x => x.ch).join('') || '（最後一字）';
+    $('#nextBtn').disabled = !(w[k + 1] != null && w[k + 1] <= frontier() || (frontier() < 0 && w[k + 1] != null));
+    $$('.ink-dot').forEach(b => b.classList.toggle('on', b.dataset.ink === prefs.ink && !eraser));
+    $('#eraserBtn').classList.toggle('primary', eraser);
   };
-  ink.addEventListener('pointerdown', e => {
+  const layout = async () => {
+    const fit = (cv, wrap, sz) => { cv.width = cv.height = Math.round(sz * devicePixelRatio); cv.style.width = cv.style.height = sz + 'px'; };
+    const sb = $('#sheetBox').getBoundingClientRect(), bw = $('#boxWrap').getBoundingClientRect();
+    sheetSize = Math.floor(Math.min(sb.width, sb.height)); box = Math.floor(Math.min(bw.width, bw.height));
+    fit(sheet, null, sheetSize); fit(bxbg, null, box); fit(bxink, null, box);
+    await loadCopyFont();
+    drawSheetNow(); drawBox(); showInfo();
+  };
+  const goto = (i, keep = true) => { if (keep) keepDraft(); run.pos = i; loadStrokes(); save(); drawSheetNow(); drawBox(); showInfo(); };
+
+  // 大格子寫字
+  const pos = e => { const r = bxink.getBoundingClientRect(); return [+((e.clientX - r.left) / box).toFixed(4), +((e.clientY - r.top) / box).toFixed(4), e.pointerType === 'pen' ? +(e.pressure || .5).toFixed(2) : .5]; };
+  const eraseAt = ([x, y]) => {
+    const n = strokes.length;
+    strokes = strokes.filter(s => !s.p.some(([a, b]) => Math.hypot(a - x, b - y) < .05));
+    if (strokes.length !== n) { redrawInk(); keepDraft(); save(); }
+  };
+  bxink.addEventListener('pointerdown', e => {
     if (e.pointerType === 'pen') sawPen = true;
     if (e.pointerType === 'touch' && !fingerOk()) return; // 手指、手掌不畫
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    e.preventDefault(); try { ink.setPointerCapture(e.pointerId); } catch (_) { /* 沒有實體指標時忽略 */ }
+    e.preventDefault(); try { bxink.setPointerCapture(e.pointerId); } catch (_) { /* 沒有實體指標時忽略 */ }
     const p = pos(e);
     if (eraser) { cur = { erase: true, id: e.pointerId }; eraseAt(p); return; }
     cur = { id: e.pointerId, s: { c: prefs.ink, p: [p] } };
-    run.strokes.push(cur.s);
-    drawStrokes(ictx, size, [cur.s]);
+    strokes.push(cur.s); drawStrokes(ictx, 0, 0, box, [cur.s]);
   });
-  ink.addEventListener('pointermove', e => {
+  bxink.addEventListener('pointermove', e => {
     if (!cur || e.pointerId !== cur.id) return;
     const co = e.getCoalescedEvents?.(); // 筆的細點（比較滑順）；拿不到就用這一個
     for (const ev of co && co.length ? co : [e]) {
       const p = pos(ev);
       if (cur.erase) { eraseAt(p); continue; }
       const pts = cur.s.p, last = pts[pts.length - 1];
-      if (Math.hypot(p[0] - last[0], p[1] - last[1]) < .0015) continue;
-      pts.push(p); drawStrokes(ictx, size, [{ c: cur.s.c, p: [last, p] }]);
+      if (Math.hypot(p[0] - last[0], p[1] - last[1]) < .004) continue;
+      pts.push(p); drawStrokes(ictx, 0, 0, box, [{ c: cur.s.c, p: [last, p] }]);
     }
   });
-  const end = e => { if (cur && e.pointerId === cur.id) { cur = null; saveDraft(); } };
-  ink.addEventListener('pointerup', end); ink.addEventListener('pointercancel', end);
+  const end = e => { if (cur && e.pointerId === cur.id) { cur = null; keepDraft(); save(); } };
+  bxink.addEventListener('pointerup', end); bxink.addEventListener('pointercancel', end);
+
+  // 點整頁上寫過的字 → 跳過去重寫（Q9）
+  sheet.addEventListener('click', e => {
+    const r = sheet.getBoundingClientRect(), s = sheetSize / GRID;
+    const col = Math.floor((sheetSize - (e.clientX - r.left)) / s), row = Math.floor((e.clientY - r.top) / s);
+    const i = col * GRID + row;
+    if (cells[i] && (run.chars[i] || i === frontier())) goto(i);
+    else if (cells[i]) toast('還沒寫到這個字');
+  });
+
   const onResize = () => layout();
   window.addEventListener('resize', onResize);
-  pageCleanup = () => { window.removeEventListener('resize', onResize); clearTimeout(saveT); kvSet(copyRunKey(id), run); keepAwake(false); };
-  showPage(); showInk(); await layout();
+  pageCleanup = () => { window.removeEventListener('resize', onResize); keepDraft(); clearTimeout(saveT); kvSet(copyRunKey(id), run); keepAwake(false); };
+  loadStrokes(); await layout();
 
   view.onclick = async e => {
     const dot = e.target.closest('[data-ink]');
-    if (dot) { prefs.ink = dot.dataset.ink; eraser = false; $('#eraserBtn').classList.remove('primary'); kvSet('copyPrefs', prefs); showInk(); return; }
+    if (dot) { prefs.ink = dot.dataset.ink; eraser = false; kvSet('copyPrefs', prefs); showInfo(); return; }
     const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return;
+    const w = writable(), k = w.indexOf(run.pos);
     if (a === 'leave') { location.hash = 'copy'; return; }
-    if (a === 'undo') { run.strokes.pop(); redrawInk(); saveDraft(); return; }
-    if (a === 'eraser') { eraser = !eraser; $('#eraserBtn').classList.toggle('primary', eraser); showInk(); return; }
-    if (a === 'clear') { if (run.strokes.length && confirm('清除這一頁寫的字？')) { run.strokes = []; redrawInk(); saveDraft(); } return; }
-    if (a === 'done') {
-      if (!run.strokes.length) { toast('這頁還沒有寫字'); return; }
-      if (!confirm(`第 ${run.page + 1} 頁完成了嗎？完成後就不能再改。`)) return;
-      // 存成圖：1000×1000，底稿淡一點、墨跡照寫的
+    if (a === 'mode') { prefs.mode = prefs.mode === 'trace' ? 'copy' : 'trace'; kvSet('copyPrefs', prefs); drawBox(); showInfo(); return; }
+    if (a === 'undo') { strokes.pop(); redrawInk(); keepDraft(); save(); return; }
+    if (a === 'eraser') { eraser = !eraser; showInfo(); return; }
+    if (a === 'clear') { if (strokes.length) { strokes = []; redrawInk(); keepDraft(); save(); } return; }
+    if (a === 'prev') { if (k > 0) goto(w[k - 1]); else toast('這是這頁的第一個字'); return; }
+    if (a === 'next') { if (!$('#nextBtn').disabled) goto(w[k + 1]); return; }
+    if (a === 'ok') {
+      if (!strokes.length) { toast('還沒寫'); return; }
+      run.chars[run.pos] = strokes; delete run.drafts[run.pos];
+      const f = frontier();
+      if (f >= 0) { goto(f, false); return; } // 回到原本寫到的地方（重寫時）或下一個字
+      // 這頁寫完（Q10）：存成圖，只有格線和手寫字
       const out = document.createElement('canvas'); out.width = out.height = 1000;
-      const octx = out.getContext('2d');
-      drawSheet(octx, 1000, pages[run.page], '#dedad3'); drawStrokes(octx, 1000, run.strokes);
+      drawPage(out.getContext('2d'), 1000, cells, run.chars, { guide: false });
       const blob = await new Promise(res => out.toBlob(res, 'image/webp', .85));
       await saveCopy({ id: uid(), sutraId: c.id, name: c.name, round: run.round, page: run.page + 1, pages: pages.length, image: blob, at: new Date().toISOString() });
-      run.page++; run.strokes = [];
+      toast(`第 ${run.page + 1} 頁完成 🙏`);
+      Object.assign(run, { page: run.page + 1, chars: {}, drafts: {}, pos: null });
       if (run.page >= pages.length) {
         run.pendingDed = true; await kvSet(copyRunKey(id), run);
         await finishCopyRound(c, run);
         location.hash = 'copy'; return;
       }
+      cells = pages[run.page]; run.pos = frontier(); loadStrokes();
       await kvSet(copyRunKey(id), run);
-      toast(`第 ${run.page} 頁完成 🙏`);
-      showPage(); await layout();
+      drawSheetNow(); drawBox(); showInfo();
     }
   };
 }

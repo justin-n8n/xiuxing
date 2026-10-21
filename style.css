@@ -213,9 +213,26 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 .copy-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .copy-bar .btn { padding: 7px 12px; min-height: 40px; }
 .copy-title { font-family: var(--serif); margin-left: 6px; }
-.copy-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; position: relative; }
-.copy-stage canvas { position: absolute; border-radius: 4px; box-shadow: 0 1px 6px rgba(0,0,0,.15); }
-.copy-stage #ink { touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair; }
+.copy-main { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.copy-sheet { flex: 1 1 46%; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.copy-write { flex: 1 1 54%; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.copy-boxrow { flex: 1; min-height: 0; display: flex; gap: 8px; }
+.copy-box { flex: 1; min-width: 0; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; }
+.copy-box canvas { position: absolute; }
+.copy-sheet canvas, .copy-box canvas { border-radius: 4px; box-shadow: 0 1px 6px rgba(0,0,0,.15); }
+#bxink { touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair; }
+#sheet { cursor: pointer; }
+.copy-side { width: 64px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.copy-model { font-family: CopyKai, var(--serif); font-size: 52px; line-height: 1.1; min-height: 1px; color: var(--ink); }
+.copy-next { font-family: CopyKai, var(--serif); font-size: 26px; line-height: 1.25; writing-mode: vertical-rl; color: var(--muted); }
+.copy-nav .btn { flex: 1; }
+.copy-nav .copy-ok { flex: 1.6; font-size: 1.15rem; min-height: 52px; }
+.copy-nav .btn:disabled { opacity: .4; }
+/* 平板橫拿：左邊大格子、右邊整頁（新Q6）；手機橫拿高度太矮，維持上下排 */
+@media (orientation: landscape) and (min-height: 560px) {
+  .copy-main { flex-direction: row-reverse; }
+  .copy-sheet, .copy-write { flex: 1 1 50%; }
+}
 .ink-dot { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--card); background: var(--dot); box-shadow: 0 0 0 1px var(--line); }
 .ink-dot.on { box-shadow: 0 0 0 3px var(--accent); }
 .book-h { font-family: var(--serif); text-align: center; font-size: 1.2rem; }
