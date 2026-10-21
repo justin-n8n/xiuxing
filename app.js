@@ -1,7 +1,31 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.6.0';
+const APP_VERSION = '0.6.1';
+
+/* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
+(function diag() {
+  let on = /[?&]diag\b/.test(location.search);
+  try { if (on) sessionStorage.setItem('diag', '1'); on = on || sessionStorage.getItem('diag') === '1'; } catch (_) { /* 無法存就只看網址 */ }
+  if (!on) return;
+  const lines = [];
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;left:4px;right:4px;top:4px;z-index:99999;background:rgba(0,0,0,.82);color:#9f9;font:11px/1.35 monospace;padding:6px;border-radius:6px;pointer-events:none;white-space:pre-wrap;max-height:42vh;overflow:hidden';
+  const name = el => !el ? 'null' : el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (typeof el.className === 'string' && el.className ? '.' + el.className.trim().split(/\s+/).join('.') : '');
+  const log = s => { lines.push(s); while (lines.length > 14) lines.shift(); box.textContent = `診斷 v${APP_VERSION}｜${innerWidth}×${innerHeight}｜${location.hash}\n` + lines.join('\n'); };
+  const add = () => { if (!box.isConnected) document.body.appendChild(box); };
+  document.addEventListener('DOMContentLoaded', add); setTimeout(add, 0);
+  addEventListener('error', e => log('❌ 錯誤：' + (e.message || e.error)));
+  addEventListener('unhandledrejection', e => log('❌ 未處理：' + (e.reason?.message || e.reason)));
+  for (const t of ['touchstart', 'pointerdown', 'click', 'focusin']) {
+    document.addEventListener(t, e => {
+      const p = e.touches?.[0] || e;
+      const stack = p.clientX != null ? document.elementsFromPoint(p.clientX, p.clientY).slice(0, 3).map(name).join(' > ') : '';
+      log(`${t} 目標=${name(e.target)}${stack ? '｜點到=' + stack : ''}${e.defaultPrevented ? '｜被擋' : ''}`);
+    }, true);
+  }
+  setTimeout(() => log(`啟動：${typeof settings !== 'undefined' && settings ? '設定已載入' : '⚠️ 設定沒載入（資料庫卡住？）'}｜SW=${navigator.serviceWorker?.controller ? '有' : '無'}`), 3000);
+})();
 
 /* ---------- 預設內容 ---------- */
 // 依課誦本的順序（v0.3.0，10/21 新Q3）；part：只在功課裡念、不另記遍數（新Q4）；hidden：預設隱藏（新Q2）
