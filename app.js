@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.6.2';
+const APP_VERSION = '0.6.3';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -35,7 +35,20 @@ const APP_VERSION = '0.6.2';
   addEventListener('resize', () => log(`resize ${innerWidth}×${innerHeight}${window.visualViewport ? '｜可見 ' + Math.round(visualViewport.height) : ''}`));
   addEventListener('hashchange', () => log('hashchange ' + location.hash));
   document.addEventListener('visibilitychange', () => log('visibility ' + document.visibilityState));
-  const watch = () => { const v = document.getElementById('view'); if (v) new MutationObserver(() => log('🔄 畫面重畫（整頁內容換掉）')).observe(v, { childList: true }); };
+  const watch = () => {
+    const v = document.getElementById('view'); if (!v) return;
+    new MutationObserver(() => log('🔄 畫面重畫（整頁內容換掉）')).observe(v, { childList: true });
+    // v0.6.3：誰換掉整頁？記下呼叫的函式名稱
+    const desc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+    Object.defineProperty(v, 'innerHTML', {
+      configurable: true, get() { return desc.get.call(this); },
+      set(html) {
+        const who = (new Error().stack || '').split('\n').slice(2, 6).map(s => (s.match(/at (?:async )?([\w$.]+)/) || [])[1] || '?').join(' ← ');
+        log(`✏️ 換頁內容：${who}`);
+        desc.set.call(this, html);
+      },
+    });
+  };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch); else watch();
 })();
 
