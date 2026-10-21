@@ -209,7 +209,9 @@ const blobToB64 = blob => new Promise((res, rej) => { const fr = new FileReader(
 
 async function syncPost(cfg, payload) {
   const r = await fetch(cfg.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...payload, pass: cfg.pass }) });
-  const j = await r.json().catch(() => ({ ok: false, error: '回應看不懂（HTTP ' + r.status + '）' }));
+  const j = await r.json().catch(() => ({ ok: false, error: r.status === 404
+    ? '找不到 Apps Script（HTTP 404）：網址可能換了。到 Apps Script「部署 → 管理部署作業」複製目前的網址，貼到這裡的設定'
+    : '回應看不懂（HTTP ' + r.status + '）' }));
   if (!j.ok) throw new Error(j.error || '同步失敗');
   return j;
 }
