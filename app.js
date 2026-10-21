@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.6.0';
 
 /* ---------- 預設內容 ---------- */
 // 依課誦本的順序（v0.3.0，10/21 新Q3）；part：只在功課裡念、不另記遍數（新Q4）；hidden：預設隱藏（新Q2）
@@ -69,15 +69,31 @@ function db() {
       }
       if (e.oldVersion < 2) d.createObjectStore('copies', { keyPath: 'id' }); // v0.4.0 抄經頁（圖）
     };
-    r.onsuccess = () => res(r.result);
+    // 手機上還開著舊版（另一個分頁或主畫面 App）時，新版要等它關掉才能存資料 → 直接說明，不要看起來沒反應
+    r.onblocked = () => showStuck('⚠️ 手機上還開著舊版的修行紀錄（另一個 Chrome 分頁或主畫面 App）。請把它們都關掉（最近使用的 App 清單滑掉），再重新打開。');
+    r.onsuccess = () => {
+      const d = r.result;
+      d.onversionchange = () => { d.close(); dbp = null; showStuck('🔄 修行紀錄有新版本，請把這個畫面關掉再重新打開。'); };
+      hideStuck(); res(d);
+    };
     r.onerror = () => rej(r.error);
   });
   return dbp;
 }
-async function req(store, mode, fn) {
+function showStuck(msg) {
+  let el = document.getElementById('stuck');
+  if (!el) { el = document.createElement('div'); el.id = 'stuck'; el.className = 'stuck'; document.body.appendChild(el); }
+  el.textContent = msg;
+}
+function hideStuck() { document.getElementById('stuck')?.remove(); }
+async function req(store, mode, fn, retry = true) {
   const d = await db();
   return new Promise((res, rej) => {
-    const t = d.transaction(store, mode);
+    let t;
+    try { t = d.transaction(store, mode); } catch (e) { // 連線被關掉了（例如另一個分頁開了新版）：重新連一次
+      if (retry && e.name === 'InvalidStateError') { dbp = null; return req(store, mode, fn, false).then(res, rej); }
+      return rej(e);
+    }
     const out = fn(t.objectStore(store));
     t.oncomplete = () => res(out && 'result' in out ? out.result : undefined);
     t.onerror = () => rej(t.error);
@@ -86,12 +102,27 @@ async function req(store, mode, fn) {
 const dbAll = store => req(store, 'readonly', s => s.getAll());
 const dbPut = (store, obj) => req(store, 'readwrite', s => s.put(obj));
 const dbDel = (store, id) => req(store, 'readwrite', s => s.delete(id));
-const kvGet = async (k, dflt) => { const r = await req('kv', 'readonly', s => s.get(k)); return r ? r.v : dflt; };
-const kvSet = (k, v) => dbPut('kv', { k, v });
-const kvDel = k => dbDel('kv', k);
+// 兩台同步（v0.6.0）：這些 key 是進度與設定，每次改都記時間、排進待同步；其他 key（外觀、字大小、描紅／臨寫、同步設定…）只留在這台
+const SYNC_KEY = /^(settings|sitPrefs|setRun|sitRun|chant:.+|copyRun:.+)$/;
+const kvRaw = k => req('kv', 'readonly', s => s.get(k));
+const kvGet = async (k, dflt) => { const r = await kvRaw(k); return r && !r.deleted ? r.v : dflt; };
+async function kvSet(k, v) {
+  const synced = SYNC_KEY.test(k);
+  await dbPut('kv', synced ? { k, v, at: new Date().toISOString() } : { k, v });
+  if (synced) await markState(k);
+}
+async function kvDel(k) {
+  if (!SYNC_KEY.test(k)) return dbDel('kv', k);
+  await dbPut('kv', { k, v: null, deleted: true, at: new Date().toISOString() }); // 刪除也要傳到另一台
+  await markState(k);
+}
+function markState(k) {
+  scheduleSync(15000); // 佛號一直點、整套功課一直捲時不用每次都送，停下來 15 秒內送
+  return withQueue(q => { if (!q.state.includes(k)) q.state.push(k); });
+}
 
 /* ---------- 雲端同步（第二段）：存檔時記進待同步清單，有網路就送到 Apps Script ---------- */
-const emptyQueue = () => ({ logs: [], diary: [], deletes: [], audio: [], copies: [] });
+const emptyQueue = () => ({ logs: [], diary: [], deletes: [], audio: [], copies: [], state: [] });
 let qChain = Promise.resolve();
 function withQueue(fn) { // 待同步清單的讀寫排隊進行，避免互相蓋掉
   const run = qChain.then(async () => { const q = Object.assign(emptyQueue(), await kvGet('syncQueue', {})); const r = await fn(q); await kvSet('syncQueue', q); return r; });
@@ -116,8 +147,13 @@ async function delRec(store, id) {
   });
   scheduleSync();
 }
-let syncTimer = null, syncing = false;
-function scheduleSync() { clearTimeout(syncTimer); syncTimer = setTimeout(() => syncNow(false), 1500); }
+let syncTimer = null, syncDue = 0, syncing = false, syncAgain = false;
+function scheduleSync(ms = 1500) { // 已經排了比較早的就不改
+  const due = Date.now() + ms;
+  if (syncTimer && syncDue <= due) return;
+  clearTimeout(syncTimer); syncDue = due;
+  syncTimer = setTimeout(() => { syncTimer = null; syncNow(false); }, ms);
+}
 const getRec = (store, id) => req(store, 'readonly', s => s.get(id));
 const stripAudio = ({ audio, ...rest }) => ({ ...rest, hasAudio: !!(audio || rest.audioFileId) });
 const blobToB64 = blob => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); });
@@ -132,20 +168,24 @@ async function syncNow(manual) {
   const cfg = await kvGet('sync', {});
   if (!cfg.url || !cfg.pass) { if (manual) toast('還沒設定雲端同步（⚙ 設定 → 雲端同步）'); return false; }
   if (!navigator.onLine) { if (manual) toast('沒有網路，有網路時會自動同步'); return false; }
-  if (syncing) return false;
+  if (syncing) { syncAgain = true; return false; }
   syncing = true;
   try {
-    const q = Object.assign(emptyQueue(), await kvGet('syncQueue', {}));
+    const q = await withQueue(q0 => JSON.parse(JSON.stringify(q0))); // 排在還沒寫完的待同步之後讀，才不會漏
+    const stateDocs = (await Promise.all(q.state.map(kvRaw))).filter(r => r && r.at).map(stateOut);
     const logs = (await Promise.all(q.logs.map(id => getRec('logs', id)))).filter(Boolean);
     const diary = (await Promise.all(q.diary.map(id => getRec('diary', id)))).filter(Boolean).map(stripAudio);
     const dels = [...q.deletes];
-    for (let i = 0; i < Math.max(logs.length, diary.length, dels.length); i += 100) {
-      await syncPost(cfg, { action: 'push', logs: logs.slice(i, i + 100), diary: diary.slice(i, i + 100), deletes: dels.slice(i, i + 100) });
+    for (let i = 0; i < Math.max(logs.length, diary.length, dels.length, stateDocs.length ? 1 : 0); i += 100) {
+      await syncPost(cfg, { action: 'push', logs: logs.slice(i, i + 100), diary: diary.slice(i, i + 100), deletes: dels.slice(i, i + 100), state: i ? [] : stateDocs });
     }
-    await withQueue(q2 => { // 只拿掉這次送出的，同步途中新增的留著下次送
+    const sentAt = Object.fromEntries(stateDocs.map(d => [d.k, d.at]));
+    await withQueue(async q2 => { // 只拿掉這次送出的，同步途中新增或又改過的留著下次送
       q2.logs = q2.logs.filter(id => !q.logs.includes(id));
       q2.diary = q2.diary.filter(id => !q.diary.includes(id));
       q2.deletes = q2.deletes.filter(d => !dels.includes(d));
+      const now = await Promise.all(q2.state.map(kvRaw));
+      q2.state = q2.state.filter((k, i) => !(k in sentAt) || now[i]?.at !== sentAt[k]);
     });
     for (const id of q.audio) {
       const rec = await getRec('diary', id);
@@ -166,9 +206,14 @@ async function syncNow(manual) {
       }
       await withQueue(q2 => { q2.copies = q2.copies.filter(x => x !== id); });
     }
+    // 抓另一台的變動：只抓上次以後的（伺服器時間），兩台的時鐘不準也不影響
+    const j = await syncPost(cfg, { action: 'pull', since: cfg.lastPull || '' });
+    const ch = await applyPull(j, cfg);
+    cfg.lastPull = j.now;
     cfg.lastAt = new Date().toISOString(); cfg.lastError = '';
     await kvSet('sync', cfg);
-    if (manual) toast(`已同步：紀錄 ${logs.length}、日記 ${diary.length}、錄音 ${q.audio.length}、抄經 ${q.copies.length} 頁`);
+    if (manual) toast(`已同步：送出 紀錄 ${logs.length}、日記 ${diary.length}、進度 ${stateDocs.length}；收到 ${ch.recs + ch.dels + ch.keys.size + ch.pics} 項`);
+    refreshAfterSync(ch);
     return true;
   } catch (err) {
     cfg.lastError = err.message; await kvSet('sync', cfg);
@@ -177,7 +222,86 @@ async function syncNow(manual) {
   } finally {
     syncing = false;
     if (location.hash === '#settings') renderSyncStatus();
+    if (syncAgain) { syncAgain = false; scheduleSync(); }
   }
+}
+
+/* 進度送出時：抄經的草稿與目前位置只留在這台 */
+function stateOut(r) {
+  let v = r.v;
+  if (v && r.k.startsWith('copyRun:')) v = copyShared(v);
+  return { k: r.k, v, at: r.at, deleted: !!r.deleted };
+}
+const copyShared = v => ({ round: v.round || 1, page: v.page || 0, chars: v.chars || {}, charsAt: v.charsAt || {}, pendingDed: !!v.pendingDed });
+/** 抄經進度合併（和 Apps Script 的 mergeCopyRun 一樣）：同一遍同一頁時兩台寫過的字都留下，同一個字以比較晚寫的為準 */
+function mergeCopyRun(a, b) {
+  const ra = a.round || 1, rb = b.round || 1, pa = a.page || 0, pb = b.page || 0;
+  if (ra !== rb) return ra > rb ? a : b;
+  if (pa !== pb) return pa > pb ? a : b;
+  const chars = { ...a.chars }, at = { ...a.charsAt }, bc = b.chars || {}, bt = b.charsAt || {};
+  Object.keys(bc).forEach(i => { if (!chars[i] || String(bt[i] || '') > String(at[i] || '')) { chars[i] = bc[i]; at[i] = bt[i]; } });
+  return { round: ra, page: pa, chars, charsAt: at, pendingDed: !!(a.pendingDed || b.pendingDed) };
+}
+/** 比較內容是否一樣（不管欄位順序） */
+function sameJSON(a, b) {
+  const norm = x => Array.isArray(x) ? x.map(norm) : x && typeof x === 'object' ? Object.fromEntries(Object.keys(x).sort().map(k => [k, norm(x[k])])) : x;
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+/** 套用另一台的一筆進度或設定；有改到回傳 true */
+async function applyState(d) {
+  const local = await kvRaw(d.k);
+  let rec;
+  if (d.k === 'settings' && d.v && local?.v) {
+    rec = { k: d.k, v: mergeSettings(local.v, d.v), at: String(local.at || '') > String(d.at) ? local.at : d.at };
+  } else if (d.k.startsWith('copyRun:') && !d.deleted && d.v && local?.v && !local.deleted) {
+    const m = mergeCopyRun(copyShared(local.v), d.v);
+    const keepLocal = m.round === (local.v.round || 1) && m.page === (local.v.page || 0); // 換頁了，草稿和位置就不適用
+    rec = { k: d.k, v: keepLocal ? { ...local.v, ...m } : { ...m, drafts: {}, pos: null }, at: String(local.at || '') > String(d.at) ? local.at : d.at };
+  } else {
+    if (local?.at && String(local.at) >= String(d.at)) return false; // 這台比較新（等一下會送出去）
+    rec = d.deleted ? { k: d.k, v: null, deleted: true, at: d.at } : { k: d.k, v: d.v, at: d.at };
+  }
+  if (local && sameJSON(local.v, rec.v) && !!local.deleted === !!rec.deleted) return false;
+  await dbPut('kv', rec);
+  if (d.k === 'settings' && rec.v) await loadSettings();
+  return true;
+}
+/** 套用 pull 回來的東西：紀錄、日記（較新的為準）、刪除、進度與設定、抄經圖（這台沒有的才下載） */
+async function applyPull(j, cfg) {
+  const ch = { recs: 0, dels: 0, pics: 0, keys: new Set() };
+  for (const [store, rows] of [['logs', j.logs || []], ['diary', j.diary || []]]) {
+    for (const rec of rows) {
+      const cur = await getRec(store, rec.id);
+      if (!cur || (rec.updatedAt || rec.at) > (cur.updatedAt || cur.at)) {
+        delete rec.hasAudio; delete rec._srv; if (cur?.audio) rec.audio = cur.audio;
+        await dbPut(store, rec); ch.recs++;
+      }
+    }
+  }
+  for (const d of j.deletes || []) {
+    if (await getRec(d.store, d.id)) { await dbDel(d.store, d.id); ch.dels++; }
+  }
+  for (const d of j.state || []) if (await applyState(d)) ch.keys.add(d.k);
+  for (const meta of j.copies || []) {
+    if (await getRec('copies', meta.id) || !meta.imageFileId) continue;
+    try {
+      const g = await syncPost(cfg, { action: 'getimg', fileId: meta.imageFileId });
+      const bin = Uint8Array.from(atob(g.data), c => c.charCodeAt(0));
+      delete meta._srv;
+      await dbPut('copies', { ...meta, image: new Blob([bin], { type: g.mime || 'image/webp' }) }); ch.pics++;
+    } catch (_) { /* 這頁先略過，下次再抓 */ }
+  }
+  return ch;
+}
+/** 收到另一台的變動後，只重畫「不會打斷你」的畫面（寫日記、設定頁不重畫） */
+function refreshAfterSync(ch) {
+  if (!(ch.recs || ch.dels || ch.pics || ch.keys.size) || !$('#modal').hidden) return;
+  const [name, sub] = (location.hash.slice(1) || 'home').split('/');
+  if (name === 'settings' || (name === 'diary' && sub)) return;
+  if (!sub || name === 'sit') route();
+  else if (name === 'chant' && ch.keys.has('chant:' + sub)) route();
+  else if (name === 'copy' && sub === 'book' && ch.pics) route();
+  else if (name === 'copy' && sub !== 'book' && ch.keys.has('copyRun:' + sub)) route();
 }
 async function pendingCount() {
   const q = Object.assign(emptyQueue(), await kvGet('syncQueue', {}));
@@ -186,14 +310,44 @@ async function pendingCount() {
 
 /* ---------- 設定 ---------- */
 let settings = null;
+let settingsSaved = {}; // 上次存的樣子：存檔時比對哪幾項改了
 async function loadSettings() {
+  const stored = await kvGet('settings', {});
   settings = Object.assign({
     dedication: DEFAULT_DEDICATION, startDate: '', customSutras: [], customChants: [], customMoods: [],
-    showDiamond: false, setOrder: null, fingerWrite: false,
-  }, await kvGet('settings', {}));
+    showDiamond: false, setOrder: null, __at: {},
+  }, stored);
   if (settings.dedication === OLD_DEDICATION) settings.dedication = DEFAULT_DEDICATION; // 沒改過的舊預設換成課誦本的
+  // 「手指也能寫」只屬於這台（v0.6.0 起另外存；以前存在設定裡的搬過來）
+  settings.fingerWrite = await kvGet('fingerWrite', !!stored.fingerWrite);
+  const { fingerWrite, ...shared } = settings;
+  settingsSaved = JSON.parse(JSON.stringify(shared)); // 含預設值：新機器第一次存檔，沒動過的項目不會被當成「剛改的」
 }
-const saveSettings = () => kvSet('settings', settings);
+/** 存設定：只有改到的那幾項記上時間，兩台各改不同項目時都留得住（新Q3） */
+async function saveSettings() {
+  const { fingerWrite, ...shared } = settings;
+  if (fingerWrite !== await kvGet('fingerWrite', false)) await kvSet('fingerWrite', !!fingerWrite);
+  const now = new Date().toISOString(), at = { ...(shared.__at || {}) };
+  let changed = false;
+  for (const k of Object.keys(shared)) {
+    if (k !== '__at' && JSON.stringify(shared[k]) !== JSON.stringify(settingsSaved[k])) { at[k] = now; changed = true; }
+  }
+  if (!changed) return;
+  shared.__at = at; settings.__at = at;
+  settingsSaved = JSON.parse(JSON.stringify(shared));
+  await kvSet('settings', shared);
+}
+/** 設定合併（和 Apps Script 的 mergeSettings 一樣）：每一項以比較晚改的為準 */
+function mergeSettings(a, b) {
+  const out = { __at: {} }, aa = a.__at || {}, bb = b.__at || {};
+  new Set([...Object.keys(a), ...Object.keys(b)]).forEach(k => {
+    if (k === '__at') return;
+    const useB = !(k in a) || (k in b && String(bb[k] || '') > String(aa[k] || ''));
+    out[k] = useB ? b[k] : a[k];
+    const t = useB ? bb[k] : aa[k]; if (t) out.__at[k] = t;
+  });
+  return out;
+}
 const allSutraItems = () => [...BUILTIN_SUTRAS, ...settings.customSutras];
 const sutraItems = () => allSutraItems().filter(s => !s.hidden || (s.id === 'diamond' && settings.showDiamond));
 /** 功課順序：[{id, on}]；新加入的自訂經典排在最後、預設不念（新Q20） */
@@ -893,7 +1047,7 @@ function copyCells(c) {
 const copyRunKey = id => 'copyRun:' + id;
 /** 進度：round 第幾遍、page 第幾頁、chars 這頁寫好的字 {格子: 筆畫}、drafts 還沒按 ✓ 的字 */
 async function getCopyRun(id) {
-  const r = Object.assign({ round: 1, page: 0, chars: {}, drafts: {}, pos: null, pendingDed: false }, await kvGet(copyRunKey(id), {}));
+  const r = Object.assign({ round: 1, page: 0, chars: {}, charsAt: {}, drafts: {}, pos: null, pendingDed: false }, await kvGet(copyRunKey(id), {}));
   delete r.strokes; // v0.4.0 整頁描的草稿不再使用
   return r;
 }
@@ -981,9 +1135,9 @@ async function finishCopyRound(c, r) {
     r.pendingDed = true; await kvSet(copyRunKey(c.id), r);
     toast('之後在抄經頁點這部經就可以迴向'); return false;
   }
-  await saveRec('logs', { id: uid(), type: 'copy', itemId: 'copy:' + c.id, name: '抄經・' + c.name, unit: '遍', count: 1, round: r.round, dedicated: true, at: new Date().toISOString() });
+  await saveRec('logs', { id: `copy-${c.id}-r${r.round}`, type: 'copy', itemId: 'copy:' + c.id, name: '抄經・' + c.name, unit: '遍', count: 1, round: r.round, dedicated: true, at: new Date().toISOString() });
   const done = r.round;
-  Object.assign(r, { round: r.round + 1, page: 0, chars: {}, drafts: {}, pos: null, pendingDed: false }); // 直接改同一個物件，離開抄經頁時存的才會是新的進度
+  Object.assign(r, { round: r.round + 1, page: 0, chars: {}, charsAt: {}, drafts: {}, pos: null, pendingDed: false }); // 直接改同一個物件，離開抄經頁時存的才會是新的進度
   await kvSet(copyRunKey(c.id), r);
   toast(`已記錄：抄經・${c.name} 第 ${done} 遍 🙏`);
   return true;
@@ -1037,10 +1191,12 @@ async function renderCopyPage(id) {
   const writable = () => cells.map((x, i) => x ? i : -1).filter(i => i >= 0);
   const frontier = () => writable().find(i => !run.chars[i]) ?? -1; // 第一個還沒寫好的字＝原本寫到的地方
   if (run.pos == null || !cells[run.pos]) run.pos = frontier();
+  const pageFull = run.pos < 0; // 另一台已經把這頁寫完（同步合併後）：畫好之後直接完成這頁
+  if (pageFull) run.pos = writable().at(-1);
   const loadStrokes = () => { strokes = (run.drafts[run.pos] || run.chars[run.pos] || []).map(s => ({ c: s.c, p: s.p.slice() })); };
   const keepDraft = () => { run.drafts[run.pos] = strokes; };
   let saveT = null;
-  const save = () => { clearTimeout(saveT); saveT = setTimeout(() => kvSet(copyRunKey(id), run), 300); };
+  const save = () => { clearTimeout(saveT); saveT = setTimeout(() => saveCopyRun(id, run), 300); };
   const fingerOk = () => settings.fingerWrite && !sawPen; // 用過筆以後，手掌（觸控）一律不算
 
   const drawSheetNow = () => { sctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); drawPage(sctx, sheetSize, cells, run.chars, { cur: run.pos }); };
@@ -1117,8 +1273,28 @@ async function renderCopyPage(id) {
 
   const onResize = () => layout();
   window.addEventListener('resize', onResize);
-  pageCleanup = () => { window.removeEventListener('resize', onResize); keepDraft(); clearTimeout(saveT); kvSet(copyRunKey(id), run); keepAwake(false); };
+  pageCleanup = () => { window.removeEventListener('resize', onResize); keepDraft(); clearTimeout(saveT); saveCopyRun(id, run); keepAwake(false); };
   loadStrokes(); await layout();
+
+  // 這頁寫完（三Q10）：存成圖（只有格線和手寫字），換下一頁；整部寫完迴向
+  async function finishPage() {
+    const out = document.createElement('canvas'); out.width = out.height = 1000;
+    drawPage(out.getContext('2d'), 1000, cells, run.chars, { guide: false });
+    const blob = await new Promise(res => out.toBlob(res, 'image/webp', .85));
+    // 圖的 id 固定（經＋遍＋頁），兩台都完成同一頁也只會有一張
+    await saveCopy({ id: `${c.id}-r${run.round}-p${run.page + 1}`, sutraId: c.id, name: c.name, round: run.round, page: run.page + 1, pages: pages.length, image: blob, at: new Date().toISOString() });
+    toast(`第 ${run.page + 1} 頁完成 🙏`);
+    Object.assign(run, { page: run.page + 1, chars: {}, charsAt: {}, drafts: {}, pos: null });
+    if (run.page >= pages.length) {
+      run.pendingDed = true; await kvSet(copyRunKey(id), run);
+      await finishCopyRound(c, run);
+      location.hash = 'copy'; return;
+    }
+    cells = pages[run.page]; run.pos = frontier(); loadStrokes();
+    await kvSet(copyRunKey(id), run);
+    drawSheetNow(); drawBox(); showInfo();
+  }
+  if (pageFull) await finishPage();
 
   view.onclick = async e => {
     const dot = e.target.closest('[data-ink]');
@@ -1134,26 +1310,22 @@ async function renderCopyPage(id) {
     if (a === 'next') { if (!$('#nextBtn').disabled) goto(w[k + 1]); return; }
     if (a === 'ok') {
       if (!strokes.length) { toast('還沒寫'); return; }
-      run.chars[run.pos] = strokes; delete run.drafts[run.pos];
+      run.chars[run.pos] = strokes; run.charsAt[run.pos] = new Date().toISOString(); delete run.drafts[run.pos];
       const f = frontier();
       if (f >= 0) { goto(f, false); return; } // 回到原本寫到的地方（重寫時）或下一個字
-      // 這頁寫完（Q10）：存成圖，只有格線和手寫字
-      const out = document.createElement('canvas'); out.width = out.height = 1000;
-      drawPage(out.getContext('2d'), 1000, cells, run.chars, { guide: false });
-      const blob = await new Promise(res => out.toBlob(res, 'image/webp', .85));
-      await saveCopy({ id: uid(), sutraId: c.id, name: c.name, round: run.round, page: run.page + 1, pages: pages.length, image: blob, at: new Date().toISOString() });
-      toast(`第 ${run.page + 1} 頁完成 🙏`);
-      Object.assign(run, { page: run.page + 1, chars: {}, drafts: {}, pos: null });
-      if (run.page >= pages.length) {
-        run.pendingDed = true; await kvSet(copyRunKey(id), run);
-        await finishCopyRound(c, run);
-        location.hash = 'copy'; return;
-      }
-      cells = pages[run.page]; run.pos = frontier(); loadStrokes();
-      await kvSet(copyRunKey(id), run);
-      drawSheetNow(); drawBox(); showInfo();
+      await finishPage();
     }
   };
+}
+
+/** 存抄經進度：先和已存的（可能剛從另一台同步來）合併再寫，才不會把另一台寫的字蓋掉 */
+async function saveCopyRun(id, run) {
+  const cur = await kvGet(copyRunKey(id), null);
+  if (cur && !run.pendingDed) {
+    const m = mergeCopyRun(copyShared(cur), copyShared(run));
+    if (m.round === run.round && m.page === run.page) Object.assign(run, m);
+  }
+  await kvSet(copyRunKey(id), run);
 }
 
 /** 存一頁抄經圖，排進待同步（圖檔上傳到雲端硬碟「抄經」資料夾） */
@@ -1515,8 +1687,11 @@ async function renderSyncStatus() {
 
 /** 第一次接上雲端時，把手機上已有的紀錄全部排進待同步 */
 async function enqueueAll() {
-  const [logs, diary, copies] = await Promise.all([dbAll('logs'), dbAll('diary'), dbAll('copies')]);
+  const [logs, diary, copies, kvs] = await Promise.all([dbAll('logs'), dbAll('diary'), dbAll('copies'), dbAll('kv')]);
+  // 進度與設定：v0.6.0 以前存的沒有時間，補上（補的時候就會排進待同步）
+  for (const r of kvs) if (SYNC_KEY.test(r.k) && !r.at && !r.deleted) await kvSet(r.k, r.v);
   await withQueue(q => {
+    kvs.forEach(r => { if (SYNC_KEY.test(r.k) && r.at && !q.state.includes(r.k)) q.state.push(r.k); });
     copies.forEach(c => { if (c.image && !c.imageFileId && !q.copies.includes(c.id)) q.copies.push(c.id); });
     logs.forEach(l => { if (!q.logs.includes(l.id)) q.logs.push(l.id); });
     diary.forEach(d => {
@@ -1530,29 +1705,12 @@ async function enqueueAll() {
 async function pullFromCloud() {
   const cfg = await kvGet('sync', {});
   if (!cfg.url) { toast('還沒設定雲端同步'); return; }
-  if (!confirm('從雲端硬碟把紀錄與日記抓回這支手機？\n同一筆以比較新的為準，這支手機上較新的不會被蓋掉。')) return;
+  if (!confirm('從雲端硬碟把全部的紀錄、日記、進度、設定、抄經圖重新抓一次？\n平常會自動同步，不用按；資料怪怪的時候再用。同一筆以比較新的為準。')) return;
   try {
-    const j = await syncPost(cfg, { action: 'pull' });
-    let n = 0;
-    for (const [store, rows] of [['logs', j.logs || []], ['diary', j.diary || []]]) {
-      for (const rec of rows) {
-        const cur = await getRec(store, rec.id);
-        if (!cur || (rec.updatedAt || rec.at) > (cur.updatedAt || cur.at)) {
-          delete rec.hasAudio; if (cur?.audio) rec.audio = cur.audio;
-          await dbPut(store, rec); n++;
-        }
-      }
-    }
-    let pics = 0; // 抄經圖：這台沒有的才下載
-    for (const meta of j.copies || []) {
-      if (await getRec('copies', meta.id) || !meta.imageFileId) continue;
-      try {
-        const g = await syncPost(cfg, { action: 'getimg', fileId: meta.imageFileId });
-        const bin = Uint8Array.from(atob(g.data), ch => ch.charCodeAt(0));
-        await dbPut('copies', { ...meta, image: new Blob([bin], { type: g.mime || 'image/webp' }) }); pics++;
-      } catch (_) { /* 這頁先略過，下次再還原 */ }
-    }
-    toast(`還原完成：更新 ${n} 筆、抄經 ${pics} 頁`);
+    const j = await syncPost(cfg, { action: 'pull', since: '' }); // 全部重抓一次
+    const ch = await applyPull(j, cfg);
+    cfg.lastPull = j.now; await kvSet('sync', cfg);
+    toast(`還原完成：紀錄 ${ch.recs} 筆、刪除 ${ch.dels} 筆、進度與設定 ${ch.keys.size} 項、抄經 ${ch.pics} 頁`);
   } catch (err) { toast('還原失敗：' + err.message); }
 }
 
@@ -1597,4 +1755,8 @@ async function importData(file) {
   route();
   window.addEventListener('online', () => syncNow(false));
   setTimeout(() => syncNow(false), 2000);
+  let lastWake = 0; // 從別的 App 切回來時同步一次（10 秒內只算一次）
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Date.now() - lastWake > 10000) { lastWake = Date.now(); syncNow(false); }
+  });
 })();
