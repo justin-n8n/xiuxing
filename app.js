@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.6.1';
+const APP_VERSION = '0.6.2';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -10,14 +10,14 @@ const APP_VERSION = '0.6.1';
   if (!on) return;
   const lines = [];
   const box = document.createElement('div');
-  box.style.cssText = 'position:fixed;left:4px;right:4px;top:4px;z-index:99999;background:rgba(0,0,0,.82);color:#9f9;font:11px/1.35 monospace;padding:6px;border-radius:6px;pointer-events:none;white-space:pre-wrap;max-height:42vh;overflow:hidden';
+  box.style.cssText = 'position:fixed;left:4px;right:4px;top:4px;z-index:99999;background:rgba(0,0,0,.82);color:#9f9;font:11px/1.35 monospace;padding:6px;border-radius:6px;pointer-events:none;white-space:pre-wrap;max-height:55vh;overflow:hidden';
   const name = el => !el ? 'null' : el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (typeof el.className === 'string' && el.className ? '.' + el.className.trim().split(/\s+/).join('.') : '');
-  const log = s => { lines.push(s); while (lines.length > 14) lines.shift(); box.textContent = `診斷 v${APP_VERSION}｜${innerWidth}×${innerHeight}｜${location.hash}\n` + lines.join('\n'); };
+  const log = s => { lines.push(s); while (lines.length > 20) lines.shift(); box.textContent = `診斷 v${APP_VERSION}｜${innerWidth}×${innerHeight}｜${location.hash}\n` + lines.join('\n'); };
   const add = () => { if (!box.isConnected) document.body.appendChild(box); };
   document.addEventListener('DOMContentLoaded', add); setTimeout(add, 0);
   addEventListener('error', e => log('❌ 錯誤：' + (e.message || e.error)));
   addEventListener('unhandledrejection', e => log('❌ 未處理：' + (e.reason?.message || e.reason)));
-  for (const t of ['touchstart', 'pointerdown', 'click', 'focusin']) {
+  for (const t of ['pointerdown', 'click', 'focusin']) {
     document.addEventListener(t, e => {
       const p = e.touches?.[0] || e;
       const stack = p.clientX != null ? document.elementsFromPoint(p.clientX, p.clientY).slice(0, 3).map(name).join(' > ') : '';
@@ -25,6 +25,18 @@ const APP_VERSION = '0.6.1';
     }, true);
   }
   setTimeout(() => log(`啟動：${typeof settings !== 'undefined' && settings ? '設定已載入' : '⚠️ 設定沒載入（資料庫卡住？）'}｜SW=${navigator.serviceWorker?.controller ? '有' : '無'}`), 3000);
+  // v0.6.2：點了之後發生什麼——失去焦點、打字、畫面大小（鍵盤）、畫面重畫、勾選框有沒有真的變
+  document.addEventListener('focusout', e => log(`focusout ${name(e.target)} → ${name(e.relatedTarget)}`), true);
+  document.addEventListener('input', e => log(`input ${name(e.target)} 長度=${(e.target.value || '').length}${e.target.type === 'checkbox' ? ' 勾=' + e.target.checked : ''}`), true);
+  document.addEventListener('click', e => {
+    const t = e.target;
+    if (t.type === 'checkbox') { const before = t.checked; setTimeout(() => log(`勾選框 ${name(t)} 點完=${before} → 0.3 秒後=${t.isConnected ? t.checked : '（已被換掉）'}`), 300); }
+  }, true);
+  addEventListener('resize', () => log(`resize ${innerWidth}×${innerHeight}${window.visualViewport ? '｜可見 ' + Math.round(visualViewport.height) : ''}`));
+  addEventListener('hashchange', () => log('hashchange ' + location.hash));
+  document.addEventListener('visibilitychange', () => log('visibility ' + document.visibilityState));
+  const watch = () => { const v = document.getElementById('view'); if (v) new MutationObserver(() => log('🔄 畫面重畫（整頁內容換掉）')).observe(v, { childList: true }); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch); else watch();
 })();
 
 /* ---------- 預設內容 ---------- */

@@ -1,6 +1,6 @@
 /* 離線快取：有網路時先抓最新版（順便更新快取），沒網路時用快取。
    新增檔案時把它加進 FILES，並把 VERSION 加一。 */
-const VERSION = 'xiuxing-v0.6.1';
+const VERSION = 'xiuxing-v0.6.2';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'sutras.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'assets/river.ogg', 'assets/copyfont.woff2'];
 
 self.addEventListener('install', e => {
