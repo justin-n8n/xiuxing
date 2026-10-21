@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.7.1';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -1789,6 +1789,8 @@ async function renderSettings() {
     if (e.target.id === 'setReset' && confirm('恢復成課誦本的 9 項與順序？')) { settings.setOrder = null; await saveSettings(); renderSettings(); return; }
     if (e.target.id === 'nameSave') {
       settings.myName = $('#myName').value.trim(); settings.dharmaName = $('#dharmaName').value.trim(); settings.nickName = $('#nickName').value.trim();
+      // 沒改過的預設名字也要送上雲端（週摘要標題、另一台要用）：當成這次有改
+      ['myName', 'dharmaName', 'nickName'].forEach(k => { delete settingsSaved[k]; });
       await saveSettings(); toast('名字已儲存');
     }
     if (e.target.id === 'dedSave') { settings.dedication = $('#ded').value.trim() || DEFAULT_DEDICATION; await saveSettings(); toast('迴向文已儲存'); }
