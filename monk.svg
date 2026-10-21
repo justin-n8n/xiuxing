@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 220" role="img" aria-label="小沙彌在蒲團上禪坐">
+  <style>
+    .breathe { animation: breathe 6s ease-in-out infinite; transform-origin: 112px 196px; }
+    @keyframes breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.012, 1.03); } }
+    .smoke { animation: drift 7s ease-in-out infinite; transform-origin: 200px 150px; opacity: .55; }
+    .smoke2 { animation-delay: -3.5s; opacity: .35; }
+    @keyframes drift { 0% { transform: translate(0, 6px) scaleY(.9); opacity: 0; } 25% { opacity: .55; } 100% { transform: translate(-4px, -18px) scaleY(1.1); opacity: 0; } }
+    .zz { animation: float 6s ease-in-out infinite; }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+    @media (prefers-reduced-motion: reduce) { .breathe, .smoke, .zz { animation: none; } }
+  </style>
+  <!-- 背光 -->
+  <circle cx="112" cy="104" r="86" fill="#f1e4cf" opacity=".75"/>
+  <circle cx="112" cy="104" r="66" fill="#f7eedf" opacity=".9"/>
+  <!-- 蒲團 -->
+  <ellipse cx="112" cy="196" rx="70" ry="15" fill="#8a4b3c"/>
+  <ellipse cx="112" cy="191" rx="66" ry="12" fill="#a95e4b"/>
+  <g class="breathe">
+    <!-- 盤腿 -->
+    <ellipse cx="112" cy="178" rx="60" ry="17" fill="#7d7a76"/>
+    <ellipse cx="88" cy="176" rx="20" ry="8" fill="#8f8c87"/>
+    <ellipse cx="136" cy="176" rx="20" ry="8" fill="#8f8c87"/>
+    <!-- 海青（身體） -->
+    <path d="M70 176 Q72 118 112 108 Q152 118 154 176 Z" fill="#8f8c87"/>
+    <path d="M112 112 L98 150 L112 146 L126 150 Z" fill="#7d7a76"/>
+    <path d="M100 116 Q112 128 124 116" fill="none" stroke="#6d6a66" stroke-width="2" stroke-linecap="round"/>
+    <!-- 手（禪定印） -->
+    <ellipse cx="112" cy="160" rx="18" ry="8" fill="#f2d6bd"/>
+    <path d="M97 160 Q112 152 127 160" fill="none" stroke="#dfb999" stroke-width="1.6" stroke-linecap="round"/>
+    <!-- 頭 -->
+    <ellipse cx="80" cy="84" rx="7" ry="9" fill="#efcdb0"/>
+    <ellipse cx="144" cy="84" rx="7" ry="9" fill="#efcdb0"/>
+    <circle cx="112" cy="78" r="33" fill="#f4dcc3"/>
+    <ellipse cx="100" cy="60" rx="10" ry="6" fill="#fff" opacity=".45" transform="rotate(-25 100 60)"/>
+    <!-- 閉眼、微笑、腮紅 -->
+    <path d="M95 84 Q100 89 105 84" fill="none" stroke="#5a4636" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M119 84 Q124 89 129 84" fill="none" stroke="#5a4636" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M106 97 Q112 102 118 97" fill="none" stroke="#b5654f" stroke-width="2" stroke-linecap="round"/>
+    <ellipse cx="94" cy="94" rx="6" ry="3.5" fill="#f2a99a" opacity=".55"/>
+    <ellipse cx="130" cy="94" rx="6" ry="3.5" fill="#f2a99a" opacity=".55"/>
+  </g>
+  <!-- 香爐與香 -->
+  <path d="M188 188 Q186 172 196 170 L212 170 Q222 172 220 188 Z" fill="#9a6a2f"/>
+  <rect x="184" y="186" width="40" height="6" rx="3" fill="#7e5524"/>
+  <line x1="204" y1="170" x2="204" y2="146" stroke="#b07a3a" stroke-width="2"/>
+  <circle cx="204" cy="145" r="2" fill="#e8743b"/>
+  <path class="smoke" d="M204 142 Q198 132 205 122 Q212 112 204 100" fill="none" stroke="#b9ad99" stroke-width="2" stroke-linecap="round"/>
+  <path class="smoke smoke2" d="M204 142 Q210 132 203 122 Q196 112 204 102" fill="none" stroke="#b9ad99" stroke-width="2" stroke-linecap="round"/>
+  <!-- 小花 -->
+  <g class="zz">
+    <path d="M38 64 q4 -8 8 0 q-4 4 -8 0 Z" fill="#e8a3a3" opacity=".7"/>
+    <circle cx="42" cy="63" r="1.6" fill="#f5d48a"/>
+    <path d="M30 120 q3 -6 6 0 q-3 3 -6 0 Z" fill="#e8a3a3" opacity=".5"/>
+  </g>
+</svg>

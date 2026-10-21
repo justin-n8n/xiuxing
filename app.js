@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.6.4';
+const APP_VERSION = '0.7.0';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -364,7 +364,7 @@ async function loadSettings() {
   const stored = await kvGet('settings', {});
   settings = Object.assign({
     dedication: DEFAULT_DEDICATION, startDate: '', customSutras: [], customChants: [], customMoods: [],
-    showDiamond: false, setOrder: null, __at: {},
+    showDiamond: false, setOrder: null, myName: '張演平', dharmaName: '演平', nickName: '阿輝', __at: {},
   }, stored);
   if (settings.dedication === OLD_DEDICATION) settings.dedication = DEFAULT_DEDICATION; // 沒改過的舊預設換成課誦本的
   // 「手指也能寫」只屬於這台（v0.6.0 起另外存；以前存在設定裡的搬過來）
@@ -542,7 +542,7 @@ function stopWater(sec = 3) {
 
 /* ---------- 路由 ---------- */
 const routes = {
-  home: renderHome, sutra: renderSutra, chant: renderChant, sit: renderSit, copy: renderCopy, diary: renderDiary, settings: renderSettings,
+  cover: renderCover, home: renderHome, sutra: renderSutra, chant: renderChant, sit: renderSit, copy: renderCopy, diary: renderDiary, settings: renderSettings,
 };
 async function route() {
   const [name, ...rest] = (location.hash.slice(1) || 'home').split('/');
@@ -557,6 +557,105 @@ async function route() {
 window.addEventListener('hashchange', route);
 $('#settingsBtn').onclick = () => { location.hash = 'settings'; };
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+
+/* ---------- 封面（v0.7.0，10/21 封面Q1～Q7）：每天第一次打開先看到禪坐圖、今日法語、打氣話 ---------- */
+const dayNo = k => { const [y, m, d] = k.split('-').map(Number); return Math.floor(Date.UTC(y, m - 1, d) / 864e5); };
+function dailyQuote() {
+  const qs = window.DAILY_QUOTES || [];
+  return qs.length ? qs[dayNo(todayKey()) % qs.length] : '';
+}
+
+/** 修行統計：連續天數、累積天數、今天做了沒、這個月打坐、各種累積（打氣話用） */
+async function practiceStats() {
+  const [logsAll, diaryAll] = await Promise.all([dbAll('logs'), dbAll('diary')]);
+  const logs = logsAll.filter(counted), diary = diaryAll.filter(counted);
+  const days = new Set([...logs, ...diary].map(r => dayKey(r.at)));
+  const today = todayKey();
+  let streak = 0, k = days.has(today) ? today : shiftDay(today, -1);
+  while (days.has(k)) { streak++; k = shiftDay(k, -1); }
+  const month = today.slice(0, 7);
+  let sitMonth = 0; const tot = {};
+  logs.forEach(l => {
+    if (l.type === 'sit') { if (dayKey(l.at).startsWith(month)) sitMonth += l.minutes || 0; return; }
+    tot[l.itemId] = (tot[l.itemId] || 0) + (l.count || 0);
+  });
+  return { streak, total: days.size, todayDone: days.has(today), sitMonth, tot };
+}
+
+// 打氣話（小輝寫；Q6：平常像好朋友，里程碑那天用「隨喜讚歎」）。{n} 連續天數、{t} 累積天數、{nick} 小名、{fa} 法名
+const CHEERS = {
+  start: [
+    '{nick}，修行日誌的第一頁，從今天開始。一炷香、一遍心經都好 🙏',
+    '萬事起頭難，但你已經打開這本日誌了。今天，先坐五分鐘吧。',
+    '千里之行，始於足下。{fa}，第一步就是今天。',
+  ],
+  back: [
+    '歡迎回來，{nick}。中間停了幾天沒關係——面對它、接受它、處理它、放下它，今天重新開始就好。',
+    '你已經累積了 {t} 天，這些功夫都不會白費。今天再接上就好 🙏',
+    '停下來不是退步，是休息。今天回到蒲團上，就是精進。',
+    '累積 {t} 天的你，一定知道：重新開始的那一天最踏實。',
+  ],
+  t1: ['第 {n} 天，好的開始！{nick}，今天也照自己的步調來。', '連續 {n} 天了，慢慢來，比較快。', '今天的你，比昨天多了一點定力 🙏', '每天一點點，就是最好的修行。'],
+  t2: ['連續 {n} 天了，{nick}，節奏出來了喔！', '第 {n} 天，不知不覺已經有習慣的樣子了。', '{n} 天不間斷，這份穩定，就是功夫。', '再撐一下就滿一週了，加油！'],
+  t3: ['連續 {n} 天！{nick}，你已經是會照顧自己身心的人了。', '第 {n} 天，忙碌的日子裡還能坐下來，很不簡單。', '{n} 天了，修行不在多，在每天都有。', '累積 {t} 天、連續 {n} 天，穩穩的，很好。'],
+  t4: ['連續 {n} 天，習慣已經長出根了 🌱', '{nick}，第 {n} 天。家人一定也感受得到你的安定。', '{n} 天的精進，像水滴穿石，看不見，但一直在。', '累積 {t} 天了，回頭翻翻日記，會看到自己的變化。'],
+  t5: ['{fa}師兄，連續 {n} 天，隨喜讚歎 🙏', '第 {n} 天，修行已經是生活的一部分了。', '連續 {n} 天，這份恆心，值得給自己一個微笑。', '{n} 天了，{nick}，也記得好好休息，鬆而不懈。'],
+  t6: ['{fa}師兄，連續精進 {n} 天，隨喜讚歎 🙏', '第 {n} 天。{nick}，這條路你已經走得很穩了。', '累積 {t} 天，一步一步，都算數。', '連續 {n} 天，願這份安定，也帶給身邊的人。'],
+};
+const STREAK_MILESTONES = {
+  3: '連續 3 天！{fa}，好的開始是成功的一半 🙏',
+  7: '滿一週了！{fa}師兄，精進第 7 天，隨喜讚歎 🙏',
+  21: '連續 21 天，習慣養成了！{fa}師兄，隨喜讚歎 🙏',
+  30: '連續一個月！{fa}師兄，三十天的堅持，隨喜讚歎 🙏',
+  49: '四十九天，七七圓滿。{fa}師兄，隨喜讚歎 🙏',
+  100: '百日精進！{fa}師兄，一百天不間斷，隨喜讚歎 🙏',
+  108: '一百零八天，像一串念珠圓滿。{fa}師兄，隨喜讚歎 🙏',
+  365: '整整一年！{fa}師兄，三百六十五天的修行，隨喜讚歎 🙏',
+};
+const TOTAL_MILESTONES = [10, 50, 100, 200, 300, 500, 1000];
+
+function cheerFor(st) {
+  const i = dayNo(todayKey());
+  const pick = arr => arr[i % arr.length];
+  let msg;
+  if (!st.total) msg = pick(CHEERS.start);
+  else if (!st.streak) msg = pick(CHEERS.back);
+  else if (st.todayDone && STREAK_MILESTONES[st.streak]) msg = STREAK_MILESTONES[st.streak];
+  else if (st.todayDone && TOTAL_MILESTONES.includes(st.total)) msg = '累積修行 {t} 天！{fa}師兄，點點滴滴都是功德 🙏';
+  else {
+    const n = st.streak;
+    msg = pick(n <= 2 ? CHEERS.t1 : n <= 6 ? CHEERS.t2 : n <= 20 ? CHEERS.t3 : n <= 48 ? CHEERS.t4 : n <= 99 ? CHEERS.t5 : CHEERS.t6);
+  }
+  return msg.replace(/\{n\}/g, st.streak).replace(/\{t\}/g, st.total).replace(/\{nick\}/g, settings.nickName || '').replace(/\{fa\}/g, settings.dharmaName || '');
+}
+/** 具體的成果（每天輪一項有數字的） */
+function cheerFact(st) {
+  const facts = [];
+  if (st.sitMonth) facts.push(`🧘 這個月打坐共 ${fmtMinutes(st.sitMonth)}`);
+  if (st.tot.set) facts.push(`📿 完整功課已做 ${fmtNum(st.tot.set)} 次`);
+  COPY_SUTRAS.forEach(c => { const n = st.tot['copy:' + c.id]; if (n) facts.push(`🖌️ ${c.name}已抄 ${fmtNum(n)} 遍`); });
+  ['heart', 'dabei', 'pumen'].forEach(id => { const n = st.tot[id]; if (n) facts.push(`📖 ${findItem(id).name}已念 ${fmtNum(n)} 遍`); });
+  chantItems().forEach(c => { const n = st.tot[c.id]; if (n) facts.push(`🙏 ${c.name}已念 ${fmtNum(n)} 聲`); });
+  return facts.length ? facts[dayNo(todayKey()) % facts.length] : '';
+}
+
+async function renderCover() {
+  setTitle('修行紀錄'); setTab('');
+  document.body.classList.add('immersive');
+  await kvSet('coverDay', todayKey()); // 這台今天看過封面了（不同步）
+  const st = await practiceStats();
+  const q = dailyQuote(), fact = cheerFact(st);
+  view.innerHTML = `
+    <div class="cover">
+      <img class="cover-art" src="monk.svg" alt="小沙彌在蒲團上禪坐">
+      <h1 class="cover-name">${esc(settings.myName || '我')}的修行日誌</h1>
+      <div class="cover-date">${fmtDay(todayKey())}・${st.streak ? `連續 ${st.streak} 天・` : ''}累積 ${st.total} 天${st.todayDone ? '・今天已修行 ✓' : ''}</div>
+      ${q ? `<div class="cover-card"><div class="cover-label">今日法語</div><p class="cover-quote">${esc(q).replace(/\n/g, '<br>')}</p><div class="cover-src">—— 摘自《聖嚴法師108自在語》</div></div>` : ''}
+      <div class="cover-card cheer"><p>${esc(cheerFor(st))}</p>${fact ? `<div class="cover-fact">${esc(fact)}</div>` : ''}</div>
+      <button class="btn primary big cover-enter" data-a="enter">進入修行紀錄 🙏</button>
+    </div>`;
+  view.onclick = e => { if (e.target.closest('[data-a="enter"]')) location.hash = 'home'; };
+}
 
 /* ---------- 首頁 ---------- */
 let selectedDay = null;
@@ -590,6 +689,7 @@ async function renderHome() {
     ? `<div class="banner">🧪 目前是<b>測試期間</b>：三段全部做完後，到設定填「正式啟用日」，累積就從那天算起。</div>` : '';
 
   view.innerHTML = `
+    <div class="row" style="justify-content:flex-end;margin:-6px 0 6px"><button class="link-btn" onclick="location.hash='cover'">🪷 回封面</button></div>
     ${testing}
     <div class="card">
       <h2>今天 ${fmtDay(today)}</h2>
@@ -1395,6 +1495,7 @@ async function renderCopyBook(sutraId, round) {
     const name = COPY_SUTRAS.find(c => c.id === sutraId)?.name || sutraId;
     view.innerHTML = `<div class="sutra-head"><button class="btn" onclick="location.hash='copy/book'">‹ 返回</button></div>
       <h2 class="book-h">${esc(name)}・第 ${esc(round)} 遍</h2>
+      <p class="book-sign">${esc(settings.dharmaName || '')} 敬書</p>
       ${ps.map(r => { let src = ''; if (r.image) { src = URL.createObjectURL(r.image); urls.push(src); }
         return `<figure class="book-page">${src ? `<img src="${src}" alt="第 ${r.page} 頁">` : '<div class="empty">這頁的圖在雲端硬碟（這台沒有副本）</div>'}<figcaption>第 ${r.page} 頁・${fmtDay(dayKey(r.at))}</figcaption></figure>`; }).join('')}`;
     view.onclick = null; return;
@@ -1610,6 +1711,13 @@ async function renderSettings() {
   const customList = (arr, kind) => arr.length ? `<ul class="list">${arr.map((x, i) => `<li class="row" style="padding:8px 0"><span class="grow">${esc(x.name || x)}${x.unit ? `（${esc(x.unit)}）` : ''}</span><button class="link-btn" data-rm="${kind}:${i}">移除</button></li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">（還沒有）</p>';
   view.innerHTML = `
     <div class="card">
+      <h2>我的名字</h2>
+      <label class="field"><span>名字（封面「＿＿的修行日誌」）</span><input type="text" id="myName" value="${esc(settings.myName)}"></label>
+      <label class="field"><span>法名（抄經署名「＿＿ 敬書」、師兄稱呼）</span><input type="text" id="dharmaName" value="${esc(settings.dharmaName)}"></label>
+      <label class="field"><span>小名（打氣話用）</span><input type="text" id="nickName" value="${esc(settings.nickName)}"></label>
+      <button class="btn primary" id="nameSave">儲存</button>
+    </div>
+    <div class="card">
       <h2>迴向文</h2>
       <textarea id="ded" style="min-height:120px">${esc(settings.dedication)}</textarea>
       <div class="row" style="margin-top:8px"><button class="btn" id="dedReset">恢復預設</button><button class="btn primary" id="dedSave">儲存</button></div>
@@ -1679,6 +1787,10 @@ async function renderSettings() {
       [o[i], o[i + d]] = [o[i + d], o[i]]; settings.setOrder = o; await saveSettings(); renderSettings(); return;
     }
     if (e.target.id === 'setReset' && confirm('恢復成課誦本的 9 項與順序？')) { settings.setOrder = null; await saveSettings(); renderSettings(); return; }
+    if (e.target.id === 'nameSave') {
+      settings.myName = $('#myName').value.trim(); settings.dharmaName = $('#dharmaName').value.trim(); settings.nickName = $('#nickName').value.trim();
+      await saveSettings(); toast('名字已儲存');
+    }
     if (e.target.id === 'dedSave') { settings.dedication = $('#ded').value.trim() || DEFAULT_DEDICATION; await saveSettings(); toast('迴向文已儲存'); }
     if (e.target.id === 'dedReset') { $('#ded').value = DEFAULT_DEDICATION; }
     if (e.target.id === 'startSave') { settings.startDate = $('#startDate').value; await saveSettings(); toast(settings.startDate ? `正式啟用日：${settings.startDate}` : '已清除正式啟用日'); }
@@ -1802,6 +1914,8 @@ async function importData(file) {
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
+  // 每天第一次打開先看封面（Q2；只看這台，不同步）
+  if (['', '#home'].includes(location.hash) && await kvGet('coverDay', '') !== todayKey()) history.replaceState(null, '', location.pathname + location.search + '#cover');
   route();
   window.addEventListener('online', () => syncNow(false));
   setTimeout(() => syncNow(false), 2000);

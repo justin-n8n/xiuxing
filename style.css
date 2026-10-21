@@ -242,3 +242,18 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 /* 手機上同時開著舊版時的提示（v0.6.0） */
 .stuck { position: fixed; left: 12px; right: 12px; top: calc(12px + env(safe-area-inset-top)); z-index: 50; background: #b8322a; color: #fff;
   padding: 12px 14px; border-radius: 12px; font-size: .95rem; line-height: 1.5; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+
+/* 封面（v0.7.0） */
+.cover { max-width: 520px; margin: 0 auto; padding: calc(10px + env(safe-area-inset-top)) 4px calc(20px + env(safe-area-inset-bottom)); text-align: center; }
+.cover-art { width: min(72vw, 300px); height: auto; display: block; margin: 0 auto -6px; }
+.cover-name { font-family: var(--serif); font-size: 1.7rem; letter-spacing: .12em; margin: 4px 0 2px; }
+.cover-date { color: var(--muted); font-size: .9rem; margin-bottom: 14px; }
+.cover-card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 18px; margin: 0 0 12px; text-align: left; box-shadow: var(--shadow); }
+.cover-label { font-size: .8rem; color: var(--accent); font-weight: 600; letter-spacing: .1em; margin-bottom: 4px; }
+.cover-quote { font-family: var(--serif); font-size: 1.15rem; line-height: 1.9; margin: 0; }
+.cover-src { text-align: right; color: var(--muted); font-size: .78rem; margin-top: 6px; }
+.cover-card.cheer { background: var(--accent-soft); border-color: transparent; }
+.cover-card.cheer p { margin: 0; line-height: 1.8; }
+.cover-fact { font-size: .88rem; color: var(--muted); margin-top: 6px; }
+.cover-enter { margin-top: 6px; }
+.book-sign { text-align: center; font-family: var(--serif); color: var(--muted); margin: -8px 0 14px; letter-spacing: .2em; }
