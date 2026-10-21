@@ -2,7 +2,7 @@
    新增檔案時把它加進 FILES，並把 VERSION 加一。
    v0.6.3：一律先跟網站確認有沒有新版（cache: 'no-cache'），不再沿用手機瀏覽器留著的舊檔（GitHub Pages 會讓舊檔留 10 分鐘）。
    v0.9.0：網路很慢時（有訊號但很差）3 秒還沒回來就先用快取打開，網路的結果回來再更新快取（獨立檢查 #18）。 */
-const VERSION = 'xiuxing-v0.9.0';
+const VERSION = 'xiuxing-v0.9.1';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'sutras.js', 'quotes.js', 'monk.svg', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'assets/river.ogg', 'assets/copyfont.woff2'];
 
 self.addEventListener('install', e => {

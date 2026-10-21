@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.9.0';
+const APP_VERSION = '0.9.1';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -663,7 +663,11 @@ function cheerFor(st) {
     const n = st.streak;
     msg = pick(n <= 2 ? CHEERS.t1 : n <= 6 ? CHEERS.t2 : n <= 20 ? CHEERS.t3 : n <= 48 ? CHEERS.t4 : n <= 99 ? CHEERS.t5 : CHEERS.t6);
   }
-  return msg.replace(/\{n\}/g, st.streak).replace(/\{t\}/g, st.total).replace(/\{nick\}/g, settings.nickName || settings.dharmaName || '').replace(/\{fa\}/g, settings.dharmaName || settings.nickName || '');
+  const nick = settings.nickName || settings.dharmaName || '', fa = settings.dharmaName || settings.nickName || '';
+  // 還沒填名字時，連同後面的「師兄」「，」一起拿掉，不會變成「，修行日誌…」
+  if (!nick) msg = msg.replace(/\{nick\}，?/g, '');
+  if (!fa) msg = msg.replace(/\{fa\}(師兄)?，?/g, '');
+  return msg.replace(/\{n\}/g, st.streak).replace(/\{t\}/g, st.total).replace(/\{nick\}/g, nick).replace(/\{fa\}/g, fa).replace(/^[，、\s]+/, '');
 }
 /** 具體的成果（每天輪一項有數字的） */
 function cheerFact(st) {
@@ -688,10 +692,10 @@ async function renderCover() {
       <img class="cover-art" src="monk.svg" alt="小沙彌在蒲團上禪坐">
       <h1 class="cover-name">${esc(settings.myName || '我')}的修行日誌</h1>
       <div class="cover-date">${fmtDay(todayKey())}・${st.streak ? `連續 ${st.streak} 天・` : ''}累積 ${st.total} 天${st.todayDone ? '・今天已修行 ✓' : ''}</div>
+      ${askLink('btn big cover-ask')}
       <div class="cover-card diamond"><div class="cover-label">金剛經</div><p class="cover-quote">${esc(DIAMOND_LINES[dayNo(todayKey()) % DIAMOND_LINES.length])}</p><div class="cover-src">——《金剛般若波羅蜜經》</div></div>
       ${q ? `<div class="cover-card"><div class="cover-label">今日法語</div><p class="cover-quote">${esc(q).replace(/\n/g, '<br>')}</p><div class="cover-src">—— 摘自《聖嚴法師108自在語》</div></div>` : ''}
       <div class="cover-card cheer"><p>${esc(cheerFor(st))}</p>${fact ? `<div class="cover-fact">${esc(fact)}</div>` : ''}</div>
-      ${askLink('btn big cover-ask')}
       <button class="btn primary big cover-enter" data-a="enter">進入修行紀錄 🙏</button>
     </div>`;
   view.onclick = e => { if (e.target.closest('[data-a="enter"]')) location.hash = 'home'; };

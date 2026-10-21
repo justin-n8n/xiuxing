@@ -266,5 +266,5 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 .thanks-list ol { margin: 2px 0 0; padding-left: 1.6em; }
 .cover-card.diamond { text-align: center; }
 .cover-card.diamond .cover-src { text-align: center; }
-.cover-ask { display: flex; align-items: center; justify-content: center; text-decoration: none; margin-top: 4px; color: var(--ink); }
+.cover-ask { display: flex; align-items: center; justify-content: center; text-decoration: none; margin: 0 0 12px; color: var(--ink); }
 a.link-btn { text-decoration: none; }
