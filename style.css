@@ -246,6 +246,23 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 /* 封面（v0.7.0） */
 .cover { max-width: 520px; margin: 0 auto; padding: calc(10px + env(safe-area-inset-top)) 4px calc(20px + env(safe-area-inset-bottom)); text-align: center; }
 .cover-art { width: min(72vw, 300px); height: auto; display: block; margin: 0 auto -6px; }
+/* 佛像與圖片（v0.10.0）：小沙彌坐在佛菩薩身旁（Q3） */
+.cover-figure { position: relative; margin: 4px 0 0; padding-bottom: 18px; }
+.cover-buddha { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 16px; box-shadow: var(--shadow); }
+.cover-art.side { position: absolute; right: -6px; bottom: 0; width: 34%; margin: 0; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .25)); }
+.pic-cap { color: var(--muted); font-size: .72rem; margin: 2px 0 8px; text-align: center; }
+.cover-card.bless { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--ink); }
+.cover-card.bless img { width: 64px; height: 84px; object-fit: contain; flex: none; }
+.cover-card.bless > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.bless-icon { font-size: 2rem; flex: none; }
+.bow { text-align: center; }
+.bow-img { width: 100%; max-height: 52vh; object-fit: contain; border-radius: 12px; }
+.bow-text { font-family: var(--serif); font-size: 1.3rem; letter-spacing: .15em; margin: 8px 0 2px; }
+.calli { margin: 0 0 14px; text-align: center; }
+.calli img { width: 100%; max-width: 420px; border-radius: 12px; box-shadow: var(--shadow); }
+.calli .pic-cap { margin-top: 4px; }
+.sit-bg { position: absolute; inset: 0; background: center 10% / contain no-repeat; opacity: .38; filter: saturate(.75); pointer-events: none; -webkit-mask-image: linear-gradient(#000 55%, transparent 80%); mask-image: linear-gradient(#000 55%, transparent 80%); }
+.sitting > :not(.sit-bg) { position: relative; }
 .cover-name { font-family: var(--serif); font-size: 1.7rem; letter-spacing: .12em; margin: 4px 0 2px; }
 .cover-date { color: var(--muted); font-size: .9rem; margin-bottom: 14px; }
 .cover-card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 18px; margin: 0 0 12px; text-align: left; box-shadow: var(--shadow); }

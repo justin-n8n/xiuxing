@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.9.1';
+const APP_VERSION = '0.10.0';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -272,6 +272,7 @@ async function syncNow(manual) {
     // 抓另一台的變動：只抓上次以後的（伺服器時間），兩台的時鐘不準也不影響
     const j = await syncPost(cfg, { action: 'pull', since: cfg.lastPull || '' });
     const ch = await applyPull(j, cfg);
+    ch.pics += await syncPics(cfg, false); // 佛像與圖片（v0.10.0）：失敗不影響同步
     // 只更新同步狀態欄位，同步途中在設定頁改的網址或密語不會被蓋回（#26）
     await kvSet('sync', Object.assign(await kvGet('sync', {}), { lastPull: j.now, lastAt: new Date().toISOString(),
       lastError: stateFailed.length ? '有 ' + stateFailed.length + ' 項進度沒送成功，下次再試' : '' }));
@@ -382,7 +383,7 @@ async function loadSettings() {
   const stored = await kvGet('settings', {});
   settings = Object.assign({
     dedication: DEFAULT_DEDICATION, startDate: '', customSutras: [], customChants: [], customMoods: [],
-    showDiamond: false, setOrder: null, myName: '', dharmaName: '', nickName: '', __at: {}, // 名字由使用者在設定填（會同步），不寫進公開的程式（#20）
+    showDiamond: false, bowFirst: true, setOrder: null, myName: '', dharmaName: '', nickName: '', __at: {}, // 名字由使用者在設定填（會同步），不寫進公開的程式（#20）
   }, stored);
   if (settings.dedication === OLD_DEDICATION) settings.dedication = DEFAULT_DEDICATION; // 沒改過的舊預設換成課誦本的
   // 「手指也能寫」只屬於這台（v0.6.0 起另外存；以前存在設定裡的搬過來）
@@ -589,6 +590,79 @@ window.addEventListener('hashchange', () => route());
 $('#settingsBtn').onclick = () => { location.hash = 'settings'; };
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 
+/* ---------- 佛像與圖片（v0.10.0，10/23 grill-me Q1～Q7）----------
+   圖片版權屬法鼓山，不放進公開的程式：Justin 放在雲端硬碟「修行紀錄_私人資料／佛像及圖片」，
+   App 透過 Apps Script（v3.4）下載存在這台（kv pics 清單＋pic:<檔案id>，不同步、不進備份檔），沒網路也看得到。
+   檔名開頭決定用途：佛像_（封面、禮佛、打坐背景，每天輪一張）、處方籤_（心靈處方籤）、墨寶_（日記頁最上面）。 */
+const BLESS_URL = 'https://bless.ddm.org.tw/index_tw.php'; // 法鼓山「心靈處方籤」（Q5，Justin 指定）
+const PIC_KINDS = { '佛像': 'buddha', '處方籤': 'bless', '墨寶': 'calli' };
+function picMeta(name) {
+  const m = String(name).replace(/\.[^.]+$/, '').match(/^(佛像|處方籤|墨寶)[_＿](.+)$/);
+  return m ? { kind: PIC_KINDS[m[1]], title: m[2].trim() } : null;
+}
+const picUrls = {};
+async function picsOf(kind) { return (await kvGet('pics', [])).filter(p => p.kind === kind).sort((a, b) => a.name.localeCompare(b.name)); }
+async function picURL(p) {
+  if (!picUrls[p.id]) { const b = await kvGet('pic:' + p.id, null); if (!b) return ''; picUrls[p.id] = URL.createObjectURL(b); }
+  return picUrls[p.id];
+}
+/** 今天的那一張（同一天封面、禮佛、打坐都是同一尊） */
+async function todayPic(kind) {
+  const ps = await picsOf(kind); if (!ps.length) return null;
+  const p = ps[dayNo(todayKey()) % ps.length], url = await picURL(p);
+  return url ? { ...p, url } : null;
+}
+const picCaption = p => p.kind === 'calli' ? `聖嚴法師墨寶〈${esc(p.title)}〉` : `法鼓山 ${esc(p.title)}｜圖片：法鼓山全球資訊網`;
+/** 和雲端硬碟的圖片對一次：只下載新的或改過的；雲端拿掉的這台也拿掉。平常 6 小時最多問一次 */
+async function syncPics(cfg, force) {
+  if (!force && Date.now() - await kvGet('picsAt', 0) < 6 * 3600e3) return 0;
+  let j;
+  try { j = await syncPost(cfg, { action: 'piclist' }); }
+  catch (err) {
+    await kvSet('picError', /不認得的動作/.test(err.message) ? 'Apps Script 還是舊版，要更新到 v3.4 才能下載佛像' : err.message);
+    return 0;
+  }
+  const old = await kvGet('pics', []), list = [];
+  let got = 0, failed = 0;
+  for (const f of j.pics || []) {
+    const m = picMeta(f.name); if (!m) continue;
+    const o = old.find(x => x.id === f.id);
+    if (o && o.updated === f.updated && await kvGet('pic:' + f.id, null)) { list.push({ ...o, ...m }); continue; }
+    try {
+      const g = await syncPost(cfg, { action: 'getpic', fileId: f.id });
+      const bin = Uint8Array.from(atob(g.data), c => c.charCodeAt(0));
+      await kvSet('pic:' + f.id, new Blob([bin], { type: g.mime || 'image/jpeg' }));
+      if (picUrls[f.id]) { URL.revokeObjectURL(picUrls[f.id]); delete picUrls[f.id]; }
+      list.push({ id: f.id, name: f.name, updated: f.updated, ...m }); got++;
+    } catch (_) { failed++; if (o) list.push(o); }
+  }
+  for (const o of old) if (!list.some(x => x.id === o.id)) await kvDel('pic:' + o.id);
+  await kvSet('pics', list);
+  await kvSet('picError', failed ? `有 ${failed} 張沒下載成功，下次再試` : '');
+  if (!failed) await kvSet('picsAt', Date.now());
+  return got;
+}
+/** 念經前先禮佛（Q2 b）：看著今天的佛像合掌問訊，再開始；回傳 false＝按了返回 */
+async function bowFirst() {
+  if (!settings.bowFirst) return true;
+  const p = await todayPic('buddha');
+  if (!p) return true;
+  return new Promise(resolve => {
+    const card = openModal(`
+      <div class="bow">
+        <img class="bow-img" src="${p.url}" alt="${esc(p.title)}">
+        <div class="pic-cap">${picCaption(p)}</div>
+        <p class="bow-text">🙏 合掌・問訊</p>
+        <p class="small muted" style="margin:0 0 14px">靜下心來，再開始念誦</p>
+      </div>
+      <div class="modal-actions"><button class="btn" data-a="back">返回</button><button class="btn primary" data-a="go">開始念誦</button></div>`);
+    card.onclick = e => { const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return; closeModal(); resolve(a === 'go'); };
+  });
+}
+const blessCard = p => `<a class="cover-card bless" href="${BLESS_URL}" target="_blank" rel="noopener">
+  ${p ? `<img src="${p.url}" alt="${esc(p.title)}">` : '<span class="bless-icon">🎴</span>'}
+  <span><span class="cover-label">心靈處方籤</span><b>抽一支心靈處方籤</b><span class="small muted">在祈願觀音前合掌祈願，到法鼓山網站抽籤</span></span></a>`;
+
 /* ---------- 封面（v0.7.0，10/21 封面Q1～Q7）：每天第一次打開先看到禪坐圖、今日法語、打氣話 ---------- */
 // 「問問聖嚴師父」官方網站（v0.8.2，Justin 指定）：封面與首頁各一個連結，開新分頁
 const ASK_URL = 'https://ask.shengyen.org/';
@@ -687,12 +761,16 @@ async function renderCover() {
   await kvSet('coverDay', todayKey()); // 這台今天看過封面了（不同步）
   const st = await practiceStats();
   const q = dailyQuote(), fact = cheerFact(st);
+  const bp = await todayPic('buddha'), bl = (await picsOf('bless'))[0];
+  const blp = bl ? { ...bl, url: await picURL(bl) } : null;
   view.innerHTML = `
     <div class="cover">
-      <img class="cover-art" src="monk.svg" alt="小沙彌在蒲團上禪坐">
+      ${bp ? `<div class="cover-figure"><img class="cover-buddha" src="${bp.url}" alt="${esc(bp.title)}"><img class="cover-art side" src="monk.svg" alt="小沙彌在佛菩薩身旁禪坐"></div>
+      <div class="pic-cap">${picCaption(bp)}</div>` : '<img class="cover-art" src="monk.svg" alt="小沙彌在蒲團上禪坐">'}
       <h1 class="cover-name">${esc(settings.myName || '我')}的修行日誌</h1>
       <div class="cover-date">${fmtDay(todayKey())}・${st.streak ? `連續 ${st.streak} 天・` : ''}累積 ${st.total} 天${st.todayDone ? '・今天已修行 ✓' : ''}</div>
       ${askLink('btn big cover-ask')}
+      ${blessCard(blp?.url ? blp : null)}
       <div class="cover-card diamond"><div class="cover-label">金剛經</div><p class="cover-quote">${esc(DIAMOND_LINES[dayNo(todayKey()) % DIAMOND_LINES.length])}</p><div class="cover-src">——《金剛般若波羅蜜經》</div></div>
       ${q ? `<div class="cover-card"><div class="cover-label">今日法語</div><p class="cover-quote">${esc(q).replace(/\n/g, '<br>')}</p><div class="cover-src">—— 摘自《聖嚴法師108自在語》</div></div>` : ''}
       <div class="cover-card cheer"><p>${esc(cheerFor(st))}</p>${fact ? `<div class="cover-fact">${esc(fact)}</div>` : ''}</div>
@@ -733,7 +811,7 @@ async function renderHome() {
     ? `<div class="banner">🧪 目前是<b>測試期間</b>：三段全部做完後，到設定填「正式啟用日」，累積就從那天算起。</div>` : '';
 
   view.innerHTML = `
-    <div class="row" style="justify-content:flex-end;gap:14px;margin:-6px 0 6px">${askLink('link-btn')}<button class="link-btn" onclick="location.hash='cover'">🪷 回封面</button></div>
+    <div class="row" style="justify-content:flex-end;gap:14px;margin:-6px 0 6px">${askLink('link-btn')}<a class="link-btn" href="${BLESS_URL}" target="_blank" rel="noopener">🎴 心靈處方籤</a><button class="link-btn" onclick="location.hash='cover'">🪷 回封面</button></div>
     ${testing}
     <div class="card">
       <h2>今天 ${fmtDay(today)}</h2>
@@ -856,9 +934,9 @@ async function renderSutra(id) {
       <span class="sub">${s.part ? '' : `累積 ${fmtNum(tot[s.id] || 0)} ${esc(s.unit)} `}›</span>
     </button></li>`).join('')}</ul></div>
     <p class="muted small">要加其他經典：右上角 ⚙ 設定 →「自訂經典」。</p>`;
-  view.onclick = e => {
-    if (e.target.closest('[data-a="set"]')) { location.hash = 'sutra/set'; return; }
-    const b = e.target.closest('.item-btn'); if (b) location.hash = `sutra/${encodeURIComponent(b.dataset.id)}`;
+  view.onclick = async e => {
+    if (e.target.closest('[data-a="set"]')) { if (await bowFirst()) location.hash = 'sutra/set'; return; }
+    const b = e.target.closest('.item-btn'); if (b && await bowFirst()) location.hash = `sutra/${encodeURIComponent(b.dataset.id)}`;
   };
 }
 
@@ -1064,7 +1142,7 @@ async function renderSit() {
   clearInterval(sitTimer);
   const run = await kvGet('sitRun', null);
   if (run) return renderSitting(run);
-  const p = Object.assign({ mode: 'down', minutes: 20, interval: false, intervalMin: 10, water: false, waterVol: 50 }, await kvGet('sitPrefs', {}));
+  const p = Object.assign({ mode: 'down', minutes: 20, interval: false, intervalMin: 10, water: false, waterVol: 50, buddhaBg: true }, await kvGet('sitPrefs', {}));
   const logs = (await dbAll('logs')).filter(l => l.type === 'sit' && counted(l)).sort((a, b) => b.at.localeCompare(a.at));
   view.innerHTML = `
     <div class="card">
@@ -1086,6 +1164,8 @@ async function renderSit() {
       <h2 style="margin-top:16px">流水聲</h2>
       <div class="row"><label class="switch"><input type="checkbox" id="waterOn" ${p.water ? 'checked' : ''}> 🌊 播放溪流水聲</label>
         <button class="btn" id="waterTry">試聽</button></div>
+      <h2 style="margin-top:16px">佛像</h2>
+      <label class="switch"><input type="checkbox" id="bgOn" ${p.buddhaBg ? 'checked' : ''}> 🪷 打坐時用今天的佛像當背景（淡淡的）</label>
       <label class="row small" style="gap:8px;margin-top:6px">音量 <input type="range" id="waterVol" min="5" max="100" value="${p.waterVol}" class="grow"></label>
       <div class="timer"><div class="clock" id="preview"></div></div>
       <button class="btn primary big" id="start">開始（引磬三聲）</button>
@@ -1118,9 +1198,10 @@ async function renderSit() {
       p.interval = $('#intOn').checked;
       p.intervalMin = Math.max(1, parseInt($('#intMin').value, 10) || 10);
       p.water = $('#waterOn').checked;
+      p.buddhaBg = $('#bgOn').checked;
       if (p.mode === 'down' && !(p.minutes > 0)) { toast('請選時間'); return; }
       await kvSet('sitPrefs', p);
-      const r = { start: Date.now(), device: DEVICE, mode: p.mode, minutes: p.minutes, interval: p.interval, intervalMin: p.intervalMin, water: p.water, waterVol: p.waterVol };
+      const r = { start: Date.now(), device: DEVICE, mode: p.mode, minutes: p.minutes, interval: p.interval, intervalMin: p.intervalMin, water: p.water, waterVol: p.waterVol, buddhaBg: p.buddhaBg };
       trying = false;
       if (p.water) await startWater(p.waterVol); else stopWater(0.5);
       bells(3);
@@ -1188,6 +1269,10 @@ function renderSitting(r) {
       <button class="btn" id="soundBtn" hidden>🔔 點一下恢復聲音</button>
       <button class="btn" id="stop">${r.mode === 'down' ? '提前下坐' : '下坐'}</button>
     </div>`;
+  if (r.buddhaBg !== false) todayPic('buddha').then(p => { // 舊的打坐紀錄沒有這一項：當成開
+    const s = $('.sitting'); if (!p || !s) return;
+    const bg = document.createElement('div'); bg.className = 'sit-bg'; bg.style.backgroundImage = `url("${p.url}")`; s.prepend(bg);
+  });
   const arm = async () => { // 重新打開 App 時：瀏覽器要點一下才肯出聲
     if (r.water && !waterSrc) await startWater(r.waterVol);
     scheduleSitSounds(r);
@@ -1635,7 +1720,9 @@ async function renderDiary(action, id) {
   const list = (await dbAll('diary')).sort((a, b) => b.at.localeCompare(a.at));
   const groups = {};
   list.forEach(r => (groups[dayKey(r.at)] ||= []).push(r));
+  const cp = await todayPic('calli');
   view.innerHTML = `
+    ${cp ? `<figure class="calli"><img src="${cp.url}" alt="${esc(cp.title)}"><figcaption class="pic-cap">${picCaption(cp)}</figcaption></figure>` : ''}
     <button class="btn primary big" onclick="location.hash='diary/new'">＋ 寫日記</button>
     <p class="small muted">寫日記時可以按 🎤 用說的：錄音＋轉成文字。</p>
     ${list.length ? Object.entries(groups).map(([k, rs]) => `
@@ -1866,6 +1953,13 @@ async function renderSettings() {
       <label class="switch"><input type="checkbox" id="fingerWrite" ${settings.fingerWrite ? 'checked' : ''}> 手指也能寫（手機用；平板用觸控筆時請關掉，手掌才不會畫到）</label>
     </div>
     <div class="card">
+      <h2>佛像與圖片</h2>
+      <p class="small muted" style="margin-top:0">圖片放在你的雲端硬碟「修行紀錄_私人資料／佛像及圖片」，開了雲端同步就會自動下載到這台（不放進公開的程式）。檔名開頭：<b>佛像_</b>（封面、禮佛、打坐背景，每天輪一張）、<b>處方籤_</b>（心靈處方籤）、<b>墨寶_</b>（日記頁最上面）。</p>
+      <div id="picStatus" class="small" style="margin-bottom:8px"></div>
+      <div class="row"><button class="btn" id="picSync">重新下載圖片</button></div>
+      <label class="switch" style="margin-top:12px"><input type="checkbox" id="bowFirst" ${settings.bowFirst ? 'checked' : ''}> 念經前先禮佛（顯示今天的佛像，合掌問訊再開始）</label>
+    </div>
+    <div class="card">
       <h2>正式啟用日</h2>
       <p class="small muted" style="margin-top:0">三段全部做完後再填。填了以後，首頁和累積只算這天以後的紀錄（之前的測試紀錄保留，不會刪）。</p>
       <div class="row"><input type="date" id="startDate" value="${esc(settings.startDate)}" style="max-width:12em"><button class="btn" id="startSave">儲存</button></div>
@@ -1908,6 +2002,7 @@ async function renderSettings() {
     const son = e.target.dataset?.son;
     if (son) { const o = setOrder(); o.find(x => x.id === son).on = e.target.checked; settings.setOrder = o; await saveSettings(); return; }
     if (e.target.id === 'showDiamond') { settings.showDiamond = e.target.checked; await saveSettings(); renderSettings(); }
+    if (e.target.id === 'bowFirst') { settings.bowFirst = e.target.checked; await saveSettings(); toast(settings.bowFirst ? '念經前會先禮佛' : '念經前不顯示佛像'); }
     if (e.target.id === 'fingerWrite') { settings.fingerWrite = e.target.checked; await saveSettings(); toast(settings.fingerWrite ? '手指也能寫了' : '只有觸控筆能寫'); }
   };
   view.onclick = async e => {
@@ -1963,12 +2058,27 @@ async function renderSettings() {
     }
     if (e.target.id === 'syncNowBtn') { await syncNow(true); renderSyncStatus(); }
     if (e.target.id === 'syncPull') pullFromCloud();
+    if (e.target.id === 'picSync') {
+      const cfg = await kvGet('sync', {});
+      if (!cfg.url || !cfg.pass) { toast('要先設定雲端同步'); return; }
+      e.target.disabled = true; toast('下載中…');
+      try { const n = await syncPics(cfg, true); toast(n ? `下載了 ${n} 張` : '圖片都是最新的'); } finally { e.target.disabled = false; renderPicStatus(); }
+    }
   };
   $('#import').onchange = e => importData(e.target.files[0]);
   const cfg = await kvGet('sync', {});
   $('#syncUrl').value = cfg.url || '';
   $('#syncPass').placeholder = cfg.pass ? '（已設定，不用重填）' : '';
   renderSyncStatus();
+  renderPicStatus();
+}
+
+async function renderPicStatus() {
+  const el = $('#picStatus'); if (!el) return;
+  const ps = await kvGet('pics', []), err = await kvGet('picError', '');
+  const n = k => ps.filter(p => p.kind === k).length;
+  el.innerHTML = (ps.length ? `這台已有：佛像 ${n('buddha')} 張、處方籤 ${n('bless')} 張、墨寶 ${n('calli')} 張` : '<span class="muted">這台還沒有圖片</span>')
+    + (err ? `<br><span style="color:#b2463a">${esc(err)}</span>` : '');
 }
 
 async function renderSyncStatus() {
