@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.10.0';
+const APP_VERSION = '0.11.0';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -70,6 +70,7 @@ const SET_ITEM = { id: 'set', name: '完整功課', unit: '次' };
 const BUILTIN_CHANTS = [
   { id: 'amitabha', name: '阿彌陀佛', unit: '聲' },
   { id: 'guanyin', name: '觀世音菩薩', unit: '聲' },
+  { id: 'dizang', name: '地藏王菩薩', unit: '聲' }, // v0.11.0（佛像二Q7）
 ];
 const BUILTIN_MOODS = ['平靜', '歡喜', '感恩', '煩躁', '焦慮', '疲累', '低落'];
 const FOUR_ITS = ['面對它', '接受它', '處理它', '放下它'];
@@ -597,7 +598,7 @@ $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeM
 const BLESS_URL = 'https://bless.ddm.org.tw/index_tw.php'; // 法鼓山「心靈處方籤」（Q5，Justin 指定）
 const PIC_KINDS = { '佛像': 'buddha', '處方籤': 'bless', '墨寶': 'calli' };
 function picMeta(name) {
-  const m = String(name).replace(/\.[^.]+$/, '').match(/^(佛像|處方籤|墨寶)[_＿](.+)$/);
+  const m = String(name).replace(/\.[^.]+$/, '').match(/^(佛像|處方籤|墨寶)[_＿：:](.+)$/); // v0.11.0：打成「：」也認得
   return m ? { kind: PIC_KINDS[m[1]], title: m[2].trim() } : null;
 }
 const picUrls = {};
@@ -606,13 +607,36 @@ async function picURL(p) {
   if (!picUrls[p.id]) { const b = await kvGet('pic:' + p.id, null); if (!b) return ''; picUrls[p.id] = URL.createObjectURL(b); }
   return picUrls[p.id];
 }
-/** 今天的那一張（同一天封面、禮佛、打坐都是同一尊） */
-async function todayPic(kind) {
-  const ps = await picsOf(kind); if (!ps.length) return null;
+// v0.11.0（10/23 佛像二 Q1～Q9）：封面與打坐背景只輪原本 5 尊（Q2）；念經、佛號各配自己的佛像（Q3～Q6）；出處對照表（Q8）
+const COVER_PICS = ['大殿三寶佛', '祈願觀音', '釋迦牟尼佛', '來迎觀音', '開山觀音'];
+const ITEM_PICS = {
+  dabei: ['祈願觀音'], heart: ['祈願觀音'], pumen: ['祈願觀音'], sangui: ['大殿三寶佛'], puxian: ['普賢菩薩'], jingzhong: ['普賢菩薩'],
+  guanyin: ['祈願觀音', '來迎觀音', '開山觀音'], dizang: ['地藏王菩薩'], amitabha: ['阿彌陀佛'],
+};
+const PIC_SOURCES = { '普賢菩薩': '法鼓文化《普賢菩薩50問》', '阿彌陀佛': '《法鼓雜誌》網路版 360 期（2019.12.1）', '地藏王菩薩': '法鼓山網站' };
+async function pickPic(ps) {
+  if (!ps.length) return null;
   const p = ps[dayNo(todayKey()) % ps.length], url = await picURL(p);
   return url ? { ...p, url } : null;
 }
-const picCaption = p => p.kind === 'calli' ? `聖嚴法師墨寶〈${esc(p.title)}〉` : `法鼓山 ${esc(p.title)}｜圖片：法鼓山全球資訊網`;
+/** 今天的那一張（封面、打坐背景、沒有指定佛像的經；同一天同一尊） */
+async function todayPic(kind) {
+  const ps = await picsOf(kind);
+  if (kind !== 'buddha') return pickPic(ps);
+  const cover = ps.filter(p => COVER_PICS.includes(p.title));
+  return pickPic(cover.length ? cover : ps);
+}
+/** 某部經或某個佛號的佛像；有好幾張時每天輪一張；沒指定（或還沒下載）就用今天封面那一尊 */
+async function itemPic(id) {
+  const want = ITEM_PICS[id] || [];
+  const ps = (await picsOf('buddha')).filter(p => want.includes(p.title)).sort((a, b) => want.indexOf(a.title) - want.indexOf(b.title));
+  return (await pickPic(ps)) || todayPic('buddha');
+}
+const picCaption = p => {
+  if (p.kind === 'calli') return `聖嚴法師墨寶〈${esc(p.title)}〉`;
+  const src = PIC_SOURCES[p.title];
+  return src ? `${esc(p.title)}｜圖片：${esc(src)}` : `法鼓山 ${esc(p.title)}｜圖片：法鼓山全球資訊網`;
+};
 /** 和雲端硬碟的圖片對一次：只下載新的或改過的；雲端拿掉的這台也拿掉。平常 6 小時最多問一次 */
 async function syncPics(cfg, force) {
   if (!force && Date.now() - await kvGet('picsAt', 0) < 6 * 3600e3) return 0;
@@ -642,10 +666,10 @@ async function syncPics(cfg, force) {
   if (!failed) await kvSet('picsAt', Date.now());
   return got;
 }
-/** 念經前先禮佛（Q2 b）：看著今天的佛像合掌問訊，再開始；回傳 false＝按了返回 */
-async function bowFirst() {
+/** 念經、念佛號前先禮佛（Q2 b；v0.11.0 起依經或佛號換佛像）：合掌問訊，再開始；回傳 false＝按了返回 */
+async function bowFirst(id) {
   if (!settings.bowFirst) return true;
-  const p = await todayPic('buddha');
+  const p = await itemPic(id);
   if (!p) return true;
   return new Promise(resolve => {
     const card = openModal(`
@@ -653,9 +677,9 @@ async function bowFirst() {
         <img class="bow-img" src="${p.url}" alt="${esc(p.title)}">
         <div class="pic-cap">${picCaption(p)}</div>
         <p class="bow-text">🙏 合掌・問訊</p>
-        <p class="small muted" style="margin:0 0 14px">靜下心來，再開始念誦</p>
+        <p class="small muted" style="margin:0 0 14px">靜下心來，再開始${id && chantItems().some(c => c.id === id) ? '念佛' : '念誦'}</p>
       </div>
-      <div class="modal-actions"><button class="btn" data-a="back">返回</button><button class="btn primary" data-a="go">開始念誦</button></div>`);
+      <div class="modal-actions"><button class="btn" data-a="back">返回</button><button class="btn primary" data-a="go">開始${id && chantItems().some(c => c.id === id) ? '念佛' : '念誦'}</button></div>`);
     card.onclick = e => { const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return; closeModal(); resolve(a === 'go'); };
   });
 }
@@ -935,8 +959,8 @@ async function renderSutra(id) {
     </button></li>`).join('')}</ul></div>
     <p class="muted small">要加其他經典：右上角 ⚙ 設定 →「自訂經典」。</p>`;
   view.onclick = async e => {
-    if (e.target.closest('[data-a="set"]')) { if (await bowFirst()) location.hash = 'sutra/set'; return; }
-    const b = e.target.closest('.item-btn'); if (b && await bowFirst()) location.hash = `sutra/${encodeURIComponent(b.dataset.id)}`;
+    if (e.target.closest('[data-a="set"]')) { if (await bowFirst(setItems()[0]?.id)) location.hash = 'sutra/set'; return; } // 整套功課：開始時禮佛一次（佛像二Q4）
+    const b = e.target.closest('.item-btn'); if (b && await bowFirst(b.dataset.id)) location.hash = `sutra/${encodeURIComponent(b.dataset.id)}`;
   };
 }
 
@@ -1008,6 +1032,7 @@ async function renderSet() {
     <div class="sutra-text" id="stext" style="font-size:${fb.size}px">
       ${items.map((s, i) => `<section class="set-sec" data-i="${i}">
         <div class="set-no">${i + 1} / ${items.length}</div>
+        <div class="set-pic" data-pic="${esc(s.id)}"></div>
         ${sutraBody(s)}
         ${s.dedication ? `<div class="ded-inline" id="dedBox">${run.dedicated ? '<span class="tag">🙏 已迴向</span>' : '<button class="btn primary" data-a="ded">🙏 迴向</button>'}</div>` : ''}
       </section>`).join('')}
@@ -1019,6 +1044,10 @@ async function renderSet() {
       <button class="btn" data-a="next">下一項 ↓</button>
     </div>`;
   keepAwake(true);
+  $$('.set-pic').forEach(async el => { // 每一項經名上方放那一項的佛像小圖（佛像二Q4）
+    const p = await itemPic(el.dataset.pic);
+    if (p) el.innerHTML = `<img src="${p.url}" alt="${esc(p.title)}"><div class="pic-cap">${picCaption(p)}</div>`;
+  });
   const secs = $$('.set-sec');
   let cur = startIdx, saveT = null, finishing = false;
   const showPos = () => { $('#setPos').textContent = `第 ${cur + 1}/${items.length} 項・${items[cur].name}`; };
@@ -1081,7 +1110,7 @@ async function renderChant(id) {
       <span class="sub">累積 ${fmtNum(tot[c.id] || 0)} ${esc(c.unit)} ›</span>
     </button></li>`).join('')}</ul></div>
     <p class="muted small">點進去後整個畫面都可以點，點一下加一；每滿 ${BEADS} 聲震動一下。要加其他佛號或咒語：⚙ 設定 →「自訂佛號」。</p>`;
-  view.onclick = e => { const b = e.target.closest('.item-btn'); if (b) location.hash = `chant/${encodeURIComponent(b.dataset.id)}`; };
+  view.onclick = async e => { const b = e.target.closest('.item-btn'); if (b && await bowFirst(b.dataset.id)) location.hash = `chant/${encodeURIComponent(b.dataset.id)}`; };
 }
 
 async function renderCounter(id) {
@@ -1102,6 +1131,10 @@ async function renderCounter(id) {
       </div>
       <div class="bar"><button class="btn" data-a="minus">−1</button><button class="btn primary" data-a="done" style="flex:1">念完了</button></div>
     </div>`;
+  if (ITEM_PICS[c.id]) itemPic(c.id).then(p => { // 計數畫面淡淡的佛像背景（佛像二Q6）；自訂佛號沒有指定佛像就不放
+    const box = $('.counter'); if (!p || !box) return;
+    const bg = document.createElement('div'); bg.className = 'counter-bg'; bg.style.backgroundImage = `url("${p.url}")`; box.prepend(bg);
+  });
   const show = () => {
     $('#num').textContent = fmtNum(n);
     $('#beads').textContent = n >= BEADS ? `第 ${Math.floor(n / BEADS)} 串${n % BEADS ? ` 又 ${n % BEADS} 聲` : ''}` : `一串 ${BEADS} 聲`;
@@ -2158,11 +2191,27 @@ async function importData(file) {
   } catch (err) { alert('匯入失敗：' + err.message); }
 }
 
+/** v0.11.0：地藏王菩薩改成內建佛號。之前自己在「自訂佛號」加的同名項目：紀錄與念到一半的聲數搬過來，再移除自訂的那一項 */
+async function migrateBuiltinChants() {
+  const dup = settings.customChants.filter(c => BUILTIN_CHANTS.some(b => b.name === String(c.name).trim()));
+  if (!dup.length) return;
+  for (const c of dup) {
+    const to = BUILTIN_CHANTS.find(b => b.name === String(c.name).trim()).id;
+    for (const l of (await dbAll('logs')).filter(l => l.itemId === c.id)) await saveRec('logs', { ...l, itemId: to });
+    const n = await kvGet('chant:' + c.id, 0);
+    if (n && !(await kvGet('chant:' + to, 0))) await kvSet('chant:' + to, n); // 兩台都搬時不會加兩次
+    if (await kvRaw('chant:' + c.id)) await kvDel('chant:' + c.id);
+  }
+  settings.customChants = settings.customChants.filter(c => !dup.includes(c));
+  await saveSettings();
+}
+
 /* ---------- 啟動 ---------- */
 let DEVICE = ''; // 這台機器的代號（只存在這台）：分辨「打坐中」是哪一台（#9）
 (async function start() {
   applyTheme();
   await loadSettings();
+  await migrateBuiltinChants().catch(() => {});
   DEVICE = await kvGet('deviceId', '');
   if (!DEVICE) { DEVICE = uid(); await kvSet('deviceId', DEVICE); }
   navigator.storage?.persist?.().catch(() => {}); // 請瀏覽器不要在空間不足時清掉這個 App 的資料（#15）
