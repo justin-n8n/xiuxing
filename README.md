@@ -12,4 +12,5 @@
 - 禪坐圖 `monk.svg`：Claude Code 繪製。
 - 佛像照片、聖嚴法師墨寶：法鼓山版權所有，**不在本 repo**；使用者把圖片放在自己的雲端硬碟，App 透過自己的 Apps Script 下載、只在自己的裝置顯示並註明出處。「心靈處方籤」連到法鼓山官方網站 https://bless.ddm.org.tw/index_tw.php 。
 - 引磬聲：程式即時合成。
+- 念珠：程式用 Canvas 繪製。
 - 程式：Claude Code 協助開發。

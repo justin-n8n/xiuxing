@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.11.1';
+const APP_VERSION = '0.12.0';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -67,6 +67,7 @@ const BUILTIN_SUTRAS = [
   { id: 'diamond', name: '金剛經', unit: '遍', text: 'diamond', hidden: true },
 ];
 const SET_ITEM = { id: 'set', name: '完整功課', unit: '次' };
+const TEMPLE_ITEM = { id: 'temple', name: '小寺靜心', unit: '次' }; // 一分鐘小寺（v0.12.0）：累的時候也能來，待著就好
 const BUILTIN_CHANTS = [
   { id: 'amitabha', name: '阿彌陀佛', unit: '聲' },
   { id: 'guanyin', name: '觀世音菩薩', unit: '聲' },
@@ -365,7 +366,7 @@ async function applyPull(j, cfg) {
 function refreshAfterSync(ch) {
   if (!(ch.recs || ch.dels || ch.pics || ch.keys.size) || !$('#modal').hidden) return;
   const [name, sub] = (location.hash.slice(1) || 'home').split('/');
-  if (name === 'settings' || (name === 'diary' && sub)) return;
+  if (name === 'settings' || name === 'temple' || (name === 'diary' && sub)) return; // 小寺待著的時候不打斷
   if (name === 'sit') { if (ch.keys.has('sitRun')) route(true); } // 打坐設定畫面選到一半不重畫（#16）
   else if (!sub) route(true);
   else if (name === 'chant' && ch.keys.has('chant:' + sub)) route(true);
@@ -384,7 +385,7 @@ async function loadSettings() {
   const stored = await kvGet('settings', {});
   settings = Object.assign({
     dedication: DEFAULT_DEDICATION, startDate: '', customSutras: [], customChants: [], customMoods: [],
-    showDiamond: false, bowFirst: true, setOrder: null, myName: '', dharmaName: '', nickName: '', __at: {}, // 名字由使用者在設定填（會同步），不寫進公開的程式（#20）
+    dedicateTo: ['家人', '師長', '法界眾生'], showDiamond: false, bowFirst: true, setOrder: null, myName: '', dharmaName: '', nickName: '', __at: {}, // 名字由使用者在設定填（會同步），不寫進公開的程式（#20）
   }, stored);
   if (settings.dedication === OLD_DEDICATION) settings.dedication = DEFAULT_DEDICATION; // 沒改過的舊預設換成課誦本的
   // 「手指也能寫」只屬於這台（v0.6.0 起另外存；以前存在設定裡的搬過來）
@@ -430,7 +431,7 @@ function setOrder() {
 const setItems = () => setOrder().filter(x => x.on).map(x => sutraItems().find(s => s.id === x.id)).filter(Boolean);
 const chantItems = () => [...BUILTIN_CHANTS, ...settings.customChants];
 const moodList = () => [...BUILTIN_MOODS, ...settings.customMoods];
-const findItem = id => [SET_ITEM, ...allSutraItems(), ...COPY_ITEMS, ...chantItems()].find(i => i.id === id);
+const findItem = id => [SET_ITEM, TEMPLE_ITEM, ...allSutraItems(), ...COPY_ITEMS, ...chantItems()].find(i => i.id === id);
 const counted = rec => !settings.startDate || dayKey(rec.at) >= settings.startDate;
 
 /* ---------- 畫面共用 ---------- */
@@ -450,20 +451,35 @@ function openModal(html) {
 }
 function closeModal() { $('#modal').hidden = true; $('#modalCard').innerHTML = ''; }
 
-/** 迴向：按「迴向」才算完成（Q23）。回傳 true／false */
-function dedicate(summary) {
+/** 迴向：按「迴向」才算完成（Q23）。回傳 true／false；選的對象放在 lastDedTo（v0.12.0）。
+    opts：no、yes 改按鈕字；brief 不再顯示迴向文（畫面上已經有回向偈時用） */
+let lastDedTo = [];
+const dedMeta = who => (who?.length ? { dedicatedTo: who } : {}); // 沒選對象就不留這個欄位，舊紀錄也是這樣
+function dedicate(summary, opts = {}) {
   return new Promise(resolve => {
+    const names = settings.dedicateTo || [];
     const card = openModal(`
       <h3>迴向</h3>
       <p class="muted small" style="margin:0">${esc(summary)}</p>
-      <div class="dedication">${esc(settings.dedication)}</div>
+      ${opts.brief ? '' : `<div class="dedication">${esc(settings.dedication)}</div>`}
+      <div class="ded-who">
+        <div class="small muted">想迴向給誰？（可複選，不選也可以）</div>
+        <div class="chips">${names.map((n, i) => `<button class="chip" data-who="${i}">${esc(n)}</button>`).join('')}</div>
+        <input type="text" id="dedOther" maxlength="20" placeholder="其他人（只記這一次）" aria-label="其他迴向對象">
+      </div>
       <div class="modal-actions">
-        <button class="btn" data-a="no">還沒好</button>
-        <button class="btn primary" data-a="yes">🙏 迴向</button>
+        <button class="btn" data-a="no">${esc(opts.no || '還沒好')}</button>
+        <button class="btn primary" data-a="yes">${esc(opts.yes || '🙏 迴向')}</button>
       </div>`);
     card.onclick = e => {
+      const w = e.target.closest('[data-who]'); if (w) { w.classList.toggle('on'); return; }
       const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return;
-      closeModal(); resolve(a === 'yes');
+      const who = [...card.querySelectorAll('[data-who].on')].map(b => names[Number(b.dataset.who)]);
+      const other = $('#dedOther').value.trim();
+      if (other && !who.includes(other)) who.push(other);
+      closeModal();
+      if (a === 'yes') lastDedTo = who;
+      resolve(a === 'yes');
     };
   });
 }
@@ -571,7 +587,7 @@ function stopWater(sec = 3) {
 
 /* ---------- 路由 ---------- */
 const routes = {
-  cover: renderCover, home: renderHome, sutra: renderSutra, chant: renderChant, sit: renderSit, copy: renderCopy, diary: renderDiary, settings: renderSettings,
+  cover: renderCover, home: renderHome, temple: renderTemple, sutra: renderSutra, chant: renderChant, sit: renderSit, copy: renderCopy, diary: renderDiary, settings: renderSettings,
 };
 async function route(keepScroll = false) {
   const [name, ...rest] = (location.hash.slice(1) || 'home').split('/');
@@ -793,6 +809,7 @@ async function renderCover() {
       <div class="pic-cap">${picCaption(bp)}</div>` : '<img class="cover-art" src="monk.svg" alt="小沙彌在蒲團上禪坐">'}
       <h1 class="cover-name">${esc(settings.myName || '我')}的修行日誌</h1>
       <div class="cover-date">${fmtDay(todayKey())}・${st.streak ? `連續 ${st.streak} 天・` : ''}累積 ${st.total} 天${st.todayDone ? '・今天已修行 ✓' : ''}</div>
+      <a class="btn big cover-temple" href="#temple">🌿 今天累了？來小寺待一分鐘</a>
       ${askLink('btn big cover-ask')}
       ${blessCard(blp?.url ? blp : null)}
       <div class="cover-card diamond"><div class="cover-label">金剛經</div><p class="cover-quote">${esc(DIAMOND_LINES[dayNo(todayKey()) % DIAMOND_LINES.length])}</p><div class="cover-src">——《金剛般若波羅蜜經》</div></div>
@@ -801,6 +818,59 @@ async function renderCover() {
       <button class="btn primary big cover-enter" data-a="enter">進入修行紀錄 🙏</button>
     </div>`;
   view.onclick = e => { if (e.target.closest('[data-a="enter"]')) location.hash = 'home'; };
+}
+
+/* ---------- 一分鐘小寺（v0.12.0）：沒有目標、沒有計時數字，待著就好；合掌問訊才算今天來過 ---------- */
+const TEMPLE_FOUR = '面對它・接受它・處理它・放下它';
+async function renderTemple() {
+  setTitle('一分鐘小寺');
+  document.body.classList.add('immersive');
+  keepAwake(true);
+  const p = Object.assign({ water: true, vol: 35 }, await kvGet('templePrefs', {}));
+  const sitting = !!(await kvGet('sitRun', null)); // 打坐進行中：不碰打坐的水聲
+  const pic = await todayPic('buddha');
+  const started = Date.now();
+  let waterMine = false, bowed = false;
+  const waterLabel = () => `🌊 水聲${p.water ? '開' : '關'}`;
+  view.innerHTML = `
+    <div class="temple">
+      <div class="bar">
+        <button class="btn" data-a="leave">‹ 離開</button>
+        ${sitting ? '' : `<button class="btn" data-a="water" id="templeWater" aria-pressed="${p.water}">${waterLabel()}</button>`}
+      </div>
+      <div class="temple-main" id="templeMain">
+        ${pic ? `<img class="temple-img" src="${pic.url}" alt="${esc(pic.title)}"><div class="pic-cap">${picCaption(pic)}</div>` : '<img class="temple-img monk" src="monk.svg" alt="小沙彌在蒲團上禪坐">'}
+        <p class="temple-line" id="templeLine">不用做什麼，待著就好。</p>
+      </div>
+      <button class="btn primary big" data-a="bow" id="templeBtn">🙏 合掌問訊</button>
+    </div>`;
+  const bellT = setTimeout(() => {
+    bells(1);
+    const el = $('#templeLine'); if (el) el.textContent = '一分鐘到了。想再待一下也可以。';
+  }, 60000);
+  pageCleanup = () => { clearTimeout(bellT); if (waterMine) stopWater(1.5); };
+  view.onclick = async e => {
+    const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return;
+    if (a === 'leave' || a === 'home') { location.hash = 'home'; return; }
+    if (a === 'water') {
+      p.water = !p.water; await kvSet('templePrefs', p);
+      if (p.water) waterMine = await startWater(p.vol); else { stopWater(1.5); waterMine = false; }
+      $('#templeWater').textContent = waterLabel(); $('#templeWater').setAttribute('aria-pressed', p.water);
+      return;
+    }
+    if (a === 'bow') {
+      if (bowed) return; // 連按兩下只記一次
+      bowed = true; clearTimeout(bellT);
+      await saveRec('logs', { id: uid(), type: 'temple', itemId: TEMPLE_ITEM.id, name: TEMPLE_ITEM.name, unit: TEMPLE_ITEM.unit, count: 1, seconds: Math.round((Date.now() - started) / 1000), at: new Date().toISOString() });
+      const qs = window.DAILY_QUOTES || [], q = qs.length ? qs[Math.floor(Math.random() * qs.length)] : '';
+      $('#templeMain').innerHTML = `<div class="temple-end">
+        <p class="temple-bow">🙏 今天來過了</p>
+        ${q ? `<p class="cover-quote">${esc(q).replace(/\n/g, '<br>')}</p><div class="cover-src">—— 摘自《聖嚴法師108自在語》</div>` : ''}
+        <p class="temple-four">${TEMPLE_FOUR}</p></div>`;
+      const b = $('#templeBtn'); b.dataset.a = 'home'; b.textContent = '回到修行紀錄';
+    }
+  };
+  if (p.water && !sitting) waterMine = await startWater(p.vol);
 }
 
 /* ---------- 首頁 ---------- */
@@ -826,8 +896,12 @@ async function renderHome() {
     if (l.type === 'sit') sitMin += l.minutes || 0;
     else tot[l.itemId] = (tot[l.itemId] || 0) + (l.count || 0);
   });
-  const totalLines = [SET_ITEM, ...allSutraItems(), ...COPY_ITEMS, ...chantItems()].filter(i => tot[i.id]).map(i =>
+  const totalLines = [SET_ITEM, TEMPLE_ITEM, ...allSutraItems(), ...COPY_ITEMS, ...chantItems()].filter(i => tot[i.id]).map(i =>
     `<div class="stat"><b>${fmtNum(tot[i.id])}</b><span>${esc(i.name)}（${esc(i.unit)}）${i.unit === '聲' && tot[i.id] >= BEADS ? `・${Math.floor(tot[i.id] / BEADS)} 串` : ''}</span></div>`).join('');
+
+  const whoN = {};
+  logs.forEach(l => (l.dedicatedTo || []).forEach(w => { whoN[w] = (whoN[w] || 0) + 1; }));
+  const whoLines = Object.entries(whoN).sort((a, b) => b[1] - a[1]).map(([w, c]) => `<span class="tag" style="font-size:.9rem">${esc(w)} ${fmtNum(c)} 次</span>`).join('');
 
   const copyProg = [];
   for (const c of COPY_SUTRAS) { const r = await getCopyRun(c.id); if (r.pendingDed) copyProg.push(`${c.name} 抄完了、等迴向`); else if (copyStarted(r)) copyProg.push(`${c.name} 第 ${Math.min(r.page + 1, copyCells(c).length)}/${copyCells(c).length} 頁`); }
@@ -840,6 +914,7 @@ async function renderHome() {
     <div class="card">
       <h2>今天 ${fmtDay(today)}</h2>
       ${daySummary(today, logs, diary) || '<p class="muted" style="margin:0">今天還沒有紀錄。從下面選一項功課開始吧 🙏</p>'}
+      <a class="btn big home-temple" href="#temple">🌿 一分鐘小寺</a>
     </div>
     <div class="card">
       <h2>累積</h2>
@@ -852,6 +927,7 @@ async function renderHome() {
       </div>
       ${copyProg.length ? `<p class="small muted" style="margin:10px 0 0">🖌️ 抄經進行中：${copyProg.join('、')}</p>` : ''}
     </div>
+    ${whoLines ? `<div class="card"><h2>迴向給誰</h2><div class="chips">${whoLines}</div></div>` : ''}
     <div class="card">
       <h2>修行日曆（點一天看紀錄）</h2>
       <div class="heat" id="heat"></div>
@@ -907,6 +983,8 @@ function daySummary(key, logs, diary) {
   if (ds.length) parts.push(`日記 ${ds.length} 篇`);
   const thx = ds.reduce((n, d) => n + (d.thanks?.length || 0), 0);
   if (thx) parts.push(`感恩 ${thx} 件`);
+  const who = [...new Set(ls.flatMap(l => l.dedicatedTo || []))];
+  if (who.length) parts.push(`🙏 迴向給 ${who.map(esc).join('、')}`);
   return `<div class="chips" style="margin-top:4px">${parts.map(p => `<span class="tag" style="font-size:.9rem">${p}</span>`).join('')}</div>`;
 }
 
@@ -994,7 +1072,7 @@ async function renderSutraReader(id) {
       const n = parseInt($('#cnt').value, 10);
       if (!(n > 0)) { toast('請輸入遍數'); return; }
       if (!await dedicate(`${s.name} ${n} ${s.unit}`)) return;
-      await saveRec('logs', { id: uid(), type: 'sutra', itemId: s.id, name: s.name, unit: s.unit, count: n, dedicated: true, at: new Date().toISOString() });
+      await saveRec('logs', { id: uid(), type: 'sutra', itemId: s.id, name: s.name, unit: s.unit, count: n, dedicated: true, ...dedMeta(lastDedTo), at: new Date().toISOString() });
       toast(`已記錄：${s.name} ${n} ${s.unit} 🙏`);
       $('#cnt').value = 1;
     }
@@ -1072,7 +1150,8 @@ async function renderSet() {
     if (a === 'leave') { location.hash = 'sutra'; return; }
     if (a === 'next') { const nx = secs[Math.min(cur + 1, secs.length - 1)]; (cur + 1 < secs.length ? nx : $('.set-end')).scrollIntoView({ behavior: 'smooth' }); return; }
     if (a === 'ded') {
-      run.dedicated = true; await kvSet('setRun', run);
+      if (!await dedicate('整套功課', { brief: true })) return;
+      run.dedicated = true; run.dedicatedTo = lastDedTo; await kvSet('setRun', run);
       $('#dedBox').innerHTML = '<span class="tag">🙏 已迴向</span>'; toast('已迴向 🙏'); return;
     }
     if (a === 'finish') {
@@ -1080,9 +1159,9 @@ async function renderSet() {
       finishing = true;
       try {
       if (cur < items.length - 1 && !confirm('還沒念到最後一項，確定完成這套功課？')) return;
-      if (!run.dedicated && !await dedicate('整套功課')) return;
+      if (!run.dedicated) { if (!await dedicate('整套功課')) return; run.dedicatedTo = lastDedTo; }
       const at = new Date().toISOString();
-      await saveRec('logs', { id: uid(), type: 'set', itemId: 'set', name: SET_ITEM.name, unit: SET_ITEM.unit, count: 1, items: items.map(i => i.id), setId: run.id, dedicated: true, at });
+      await saveRec('logs', { id: uid(), type: 'set', itemId: 'set', name: SET_ITEM.name, unit: SET_ITEM.unit, count: 1, items: items.map(i => i.id), setId: run.id, dedicated: true, ...dedMeta(run.dedicatedTo), at });
       // 記遍數的經典各加一遍（新Q16）
       for (const s of items.filter(i => !i.part)) {
         await saveRec('logs', { id: uid(), type: 'sutra', itemId: s.id, name: s.name, unit: s.unit, count: 1, setId: run.id, dedicated: true, at });
@@ -1109,7 +1188,7 @@ async function renderChant(id) {
       <span><span class="name">${esc(c.name)}</span>${progress[c.id] ? `<br><span class="sub">⏸ 念到 ${fmtNum(progress[c.id])} 聲，點進去繼續</span>` : ''}</span>
       <span class="sub">累積 ${fmtNum(tot[c.id] || 0)} ${esc(c.unit)} ›</span>
     </button></li>`).join('')}</ul></div>
-    <p class="muted small">點進去後整個畫面都可以點，點一下加一；每滿 ${BEADS} 聲震動一下。要加其他佛號或咒語：⚙ 設定 →「自訂佛號」。</p>`;
+    <p class="muted small">點進去後往下撥念珠或點一下都加一，也可以改回點整個畫面；每滿 ${BEADS} 聲震動一下，撥念珠時會停下來迴向。要加其他佛號或咒語：⚙ 設定 →「自訂佛號」。</p>`;
   view.onclick = async e => { const b = e.target.closest('.item-btn'); if (b && await bowFirst(b.dataset.id)) location.hash = `chant/${encodeURIComponent(b.dataset.id)}`; };
 }
 
@@ -1121,13 +1200,17 @@ async function renderCounter(id) {
   document.body.classList.add('immersive');
   keepAwake(true);
   let n = await kvGet('chant:' + c.id, 0);
+  let mode = await kvGet('chantMode', 'bead'); // bead 撥念珠（v0.12.0）／tap 點畫面；每台各自記
+  const whoAcc = new Set(await kvGet('chantWho:' + c.id, [])); // 這次念佛滿串時迴向過的對象
+  const modeLabel = () => (mode === 'bead' ? '👆 改用點擊' : '📿 改用念珠');
   view.innerHTML = `
     <div class="counter">
-      <div class="bar"><button class="btn" data-a="back">‹ 先離開</button><button class="btn" data-a="input">輸入數字</button></div>
-      <div class="tap" id="tap" role="button" aria-label="點一下加一">
+      <div class="bar"><button class="btn" data-a="back">‹ 先離開</button><button class="btn" data-a="mode" id="modeBtn">${modeLabel()}</button><button class="btn" data-a="input">輸入數字</button></div>
+      <div class="tap ${mode}" id="tap" role="button" aria-label="往下撥一顆或點一下加一">
         <div class="name">${esc(c.name)}</div>
         <div class="num" id="num">0</div>
         <div class="beads" id="beads"></div>
+        <canvas class="mala" id="mala" aria-hidden="true"></canvas>
       </div>
       <div class="bar"><button class="btn" data-a="minus">−1</button><button class="btn primary" data-a="done" style="flex:1">念完了</button></div>
     </div>`;
@@ -1135,23 +1218,107 @@ async function renderCounter(id) {
     const box = $('.counter'); if (!p || !box) return;
     const bg = document.createElement('div'); bg.className = 'counter-bg'; bg.style.backgroundImage = `url("${p.url}")`; box.prepend(bg);
   });
+  /* 念珠：一串 108 顆直直垂下，手指把珠子往下撥過拇指線。off＝這顆已經往下移了幾像素 */
+  const cv = $('#mala'), g = cv.getContext('2d');
+  let off = 0, drag = null, anim = null, busy = false;
+  const beadGap = () => Math.max(44, Math.min(64, cv.clientHeight / 6));
+  function drawMala() {
+    if (mode !== 'bead') return;
+    const w = cv.clientWidth, h = cv.clientHeight, dpr = devicePixelRatio || 1;
+    if (!w || !h) return;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement), S = beadGap(), r = S * 0.45, cx = w / 2, cy = h / 2, bend = Math.min(w * 0.16, 44);
+    const K = Math.ceil(h / 2 / S) + 1, at = y => { const t = (y - cy) / (h / 2); return { t, x: cx + bend * t * t }; };
+    g.strokeStyle = css.getPropertyValue('--muted'); g.globalAlpha = 0.5; g.lineWidth = 1.5; g.beginPath();
+    for (let y = 0; y <= h; y += 8) { const { x } = at(y); if (y) g.lineTo(x, y); else g.moveTo(x, y); }
+    g.stroke();
+    for (let k = -K; k <= K; k++) {
+      const i = (((n + k) % BEADS) + BEADS) % BEADS, y = cy - k * S + off, { t, x } = at(y);
+      const head = i === 0, mark = i % 27 === 0 && !head; // 母珠、每 27 顆一顆隔珠
+      const rr = r * (1 - 0.25 * Math.min(1, t * t)) * (head ? 1.2 : mark ? 0.74 : 1);
+      const c = head ? ['#c8735c', '#7a2c22', '#44140f'] : mark ? ['#f1d48c', '#b98a35', '#7a5518'] : ['#d6a76b', '#8d5a2b', '#50301a'];
+      const f = g.createRadialGradient(x - rr * 0.35, y - rr * 0.38, rr * 0.1, x, y, rr);
+      f.addColorStop(0, c[0]); f.addColorStop(0.6, c[1]); f.addColorStop(1, c[2]);
+      g.globalAlpha = Math.max(0, Math.min(1, 1.25 - Math.abs(t))); g.fillStyle = f;
+      g.beginPath(); g.arc(x, y, rr, 0, Math.PI * 2); g.fill();
+    }
+    g.globalAlpha = 1; g.strokeStyle = css.getPropertyValue('--accent'); g.lineWidth = 2.5; g.lineCap = 'round'; // 拇指線
+    [[cx - r * 2.2, cx - r * 1.4], [cx + r * 1.4, cx + r * 2.2]].forEach(([a, b]) => { g.beginPath(); g.moveTo(a, cy); g.lineTo(b, cy); g.stroke(); });
+  }
   const show = () => {
     $('#num').textContent = fmtNum(n);
-    $('#beads').textContent = n >= BEADS ? `第 ${Math.floor(n / BEADS)} 串${n % BEADS ? ` 又 ${n % BEADS} 聲` : ''}` : `一串 ${BEADS} 聲`;
+    $('#beads').textContent = n >= BEADS ? `第 ${Math.floor(n / BEADS)} 串${n % BEADS ? ` 又 ${n % BEADS} 聲` : ''}` : mode === 'bead' ? '往下撥一顆，或點一下' : `一串 ${BEADS} 聲`;
+    drawMala();
   };
   const save = () => kvSet('chant:' + c.id, n);
+  /** 滿一串停下來迴向（只有念珠模式）；對象累積到「念完了」那筆紀錄 */
+  async function roundDone() {
+    busy = true; drag = null; off = 0; drawMala();
+    if (await dedicate(`第 ${n / BEADS} 串圓滿`, { no: '先繼續念', yes: '🙏 迴向，繼續念', brief: true })) {
+      lastDedTo.forEach(w => whoAcc.add(w)); kvSet('chantWho:' + c.id, [...whoAcc]);
+    }
+    busy = false;
+  }
+  const count = () => {
+    n++; show(); save();
+    if (n % BEADS === 0) {
+      navigator.vibrate?.([250, 80, 250]);
+      if (mode === 'bead') roundDone(); else toast(`第 ${n / BEADS} 串 🙏`);
+    } else if (mode === 'bead') navigator.vibrate?.(14);
+  };
+  const stopAnim = () => { if (!anim) return; cancelAnimationFrame(anim.id); const done = anim.to > 0; anim = null; off = 0; if (done) count(); drawMala(); };
+  function slide(to) {
+    const from = off, t0 = performance.now(), a = { to, id: 0 }; anim = a;
+    const step = now => {
+      const x = Math.min(1, (now - t0) / 110);
+      off = from + (to - from) * x; drawMala();
+      if (x < 1) a.id = requestAnimationFrame(step); else stopAnim();
+    };
+    a.id = requestAnimationFrame(step);
+  }
   show();
   const tap = $('#tap');
   tap.addEventListener('pointerdown', e => {
     e.preventDefault();
-    n++; show(); save();
+    if (mode === 'bead') {
+      if (busy) return;
+      stopAnim();
+      if (busy) return; // 上一顆剛好滿串
+      tap.setPointerCapture?.(e.pointerId);
+      drag = { y: e.clientY, moved: 0 };
+      return;
+    }
+    count();
     tap.classList.add('flash'); setTimeout(() => tap.classList.remove('flash'), 90);
-    if (n % BEADS === 0) { navigator.vibrate?.([250, 80, 250]); toast(`第 ${n / BEADS} 串 🙏`); }
   });
-  const leave = () => { keepAwake(false); location.hash = 'chant'; };
+  tap.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dy = e.clientY - drag.y; drag.y = e.clientY; drag.moved += Math.abs(dy);
+    off = Math.max(0, off + dy);
+    const S = beadGap();
+    while (off >= S && !busy) { off -= S; count(); }
+    if (drag) drawMala();
+  });
+  const release = e => {
+    if (!drag) return;
+    const justTap = drag.moved < 8; drag = null;
+    if (e.type === 'pointercancel') { slide(0); return; }
+    const S = beadGap();
+    slide(justTap || off > S / 2 ? S : 0);
+  };
+  tap.addEventListener('pointerup', release);
+  tap.addEventListener('pointercancel', release);
+  const ro = new ResizeObserver(drawMala); ro.observe(cv);
+  pageCleanup = () => { ro.disconnect(); if (anim) cancelAnimationFrame(anim.id); };
+  const leave = () => { stopAnim(); keepAwake(false); location.hash = 'chant'; };
   view.onclick = async e => {
     const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return;
     if (a === 'back') leave();
+    if (a === 'mode') {
+      stopAnim(); mode = mode === 'bead' ? 'tap' : 'bead'; await kvSet('chantMode', mode);
+      tap.className = `tap ${mode}`; $('#modeBtn').textContent = modeLabel(); show();
+    }
     if (a === 'minus') { n = Math.max(0, n - 1); show(); save(); }
     if (a === 'input') {
       const v = await askNumber('直接輸入念了幾聲', n, c.unit);
@@ -1159,9 +1326,10 @@ async function renderCounter(id) {
     }
     if (a === 'done') {
       if (!n) { toast('還沒有計數'); return; }
+      stopAnim();
       if (!await dedicate(`${c.name} ${fmtNum(n)} ${c.unit}`)) return;
-      await saveRec('logs', { id: uid(), type: 'chant', itemId: c.id, name: c.name, unit: c.unit, count: n, dedicated: true, at: new Date().toISOString() });
-      await kvDel('chant:' + c.id);
+      await saveRec('logs', { id: uid(), type: 'chant', itemId: c.id, name: c.name, unit: c.unit, count: n, dedicated: true, ...dedMeta([...new Set([...whoAcc, ...lastDedTo])]), at: new Date().toISOString() });
+      await kvDel('chant:' + c.id); await kvDel('chantWho:' + c.id);
       toast(`已記錄：${c.name} ${fmtNum(n)} ${c.unit} 🙏`);
       leave();
     }
@@ -1340,7 +1508,7 @@ function renderSitting(r) {
     const info = await sitForm(minutes);
     if (info && await dedicate(`打坐 ${fmtMinutes(minutes)}`)) {
       // id 用開始時間：萬一兩台都記到同一次，也只算一筆（#9）
-      await saveRec('logs', { id: 'sit-' + r.start, type: 'sit', itemId: 'sit', name: '打坐', unit: '分', minutes, seconds: Math.round(sec), mode: r.mode, method: info.method, note: info.note, dedicated: true, at: new Date(r.start).toISOString() });
+      await saveRec('logs', { id: 'sit-' + r.start, type: 'sit', itemId: 'sit', name: '打坐', unit: '分', minutes, seconds: Math.round(sec), mode: r.mode, method: info.method, note: info.note, dedicated: true, ...dedMeta(lastDedTo), at: new Date(r.start).toISOString() });
       toast(`已記錄：打坐 ${fmtMinutes(minutes)} 🙏`);
     } else {
       toast('這次沒有記錄');
@@ -1496,7 +1664,7 @@ async function finishCopyRound(c, r) {
     r.pendingDed = true; await kvSet(copyRunKey(c.id), r);
     toast('之後在抄經頁點這部經就可以迴向'); return false;
   }
-  await saveRec('logs', { id: `copy-${c.id}-r${r.round}`, type: 'copy', itemId: 'copy:' + c.id, name: '抄經・' + c.name, unit: '遍', count: 1, round: r.round, dedicated: true, at: new Date().toISOString() });
+  await saveRec('logs', { id: `copy-${c.id}-r${r.round}`, type: 'copy', itemId: 'copy:' + c.id, name: '抄經・' + c.name, unit: '遍', count: 1, round: r.round, dedicated: true, ...dedMeta(lastDedTo), at: new Date().toISOString() });
   const done = r.round;
   Object.assign(r, { round: r.round + 1, page: 0, chars: {}, charsAt: {}, drafts: {}, pos: null, pendingDed: false }); // 直接改同一個物件，離開抄經頁時存的才會是新的進度
   await kvSet(copyRunKey(c.id), r);
@@ -1971,6 +2139,10 @@ async function renderSettings() {
       <h2>迴向文</h2>
       <textarea id="ded" style="min-height:120px">${esc(settings.dedication)}</textarea>
       <div class="row" style="margin-top:8px"><button class="btn" id="dedReset">恢復預設</button><button class="btn primary" id="dedSave">儲存</button></div>
+      <h2 style="margin-top:16px">迴向給誰</h2>
+      <p class="small muted" style="margin-top:0">一行一位，迴向時可以勾選。名單只存在你的手機和雲端硬碟，不會進公開程式，也不會寫進週摘要。</p>
+      <textarea id="dedWhoList" style="min-height:96px">${esc((settings.dedicateTo || []).join('\n'))}</textarea>
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="dedWhoSave">儲存名單</button></div>
     </div>
     <div class="card">
       <h2>功課內容與順序</h2>
@@ -2052,6 +2224,11 @@ async function renderSettings() {
       await saveSettings(); toast('名字已儲存');
     }
     if (e.target.id === 'dedSave') { settings.dedication = $('#ded').value.trim() || DEFAULT_DEDICATION; await saveSettings(); toast('迴向文已儲存'); }
+    if (e.target.id === 'dedWhoSave') {
+      settings.dedicateTo = [...new Set($('#dedWhoList').value.split('\n').map(x => x.trim().slice(0, 20)).filter(Boolean))].slice(0, 30);
+      $('#dedWhoList').value = settings.dedicateTo.join('\n');
+      await saveSettings(); toast('迴向名單已儲存');
+    }
     if (e.target.id === 'dedReset') { $('#ded').value = DEFAULT_DEDICATION; }
     if (e.target.id === 'startSave') { settings.startDate = $('#startDate').value; await saveSettings(); toast(settings.startDate ? `正式啟用日：${settings.startDate}` : '已清除正式啟用日'); }
     const add = e.target.closest('[data-add]')?.dataset.add;

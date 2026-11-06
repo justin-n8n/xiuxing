@@ -291,3 +291,35 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 .cover-card.diamond .cover-src { text-align: center; }
 .cover-ask { display: flex; align-items: center; justify-content: center; text-decoration: none; margin: 0 0 12px; color: var(--ink); }
 a.link-btn { text-decoration: none; }
+
+/* v0.12.0 念珠 */
+.counter .tap.bead { justify-content: flex-start; touch-action: none; padding-top: 8px; min-height: 0; }
+.counter .tap.bead .name { margin-bottom: 6px; font-size: 1.15rem; }
+.counter .tap.bead .num { font-size: clamp(2.6rem, 12vw, 4.5rem); }
+.counter .tap.bead .beads { margin-top: 4px; font-size: .85rem; }
+.mala { display: none; flex: 1; width: 100%; min-height: 0; margin-top: 6px; }
+.tap.bead .mala { display: block; }
+
+/* v0.12.0 迴向給誰 */
+.ded-who { margin: 10px 0 16px; }
+.ded-who .chips { margin: 8px 0; }
+.ded-who input { width: 100%; }
+
+/* v0.12.0 一分鐘小寺 */
+.temple {
+  position: fixed; inset: 0; z-index: 8; display: flex; flex-direction: column; gap: 10px; background: var(--bg);
+  padding: calc(10px + env(safe-area-inset-top)) 16px calc(14px + env(safe-area-inset-bottom));
+}
+.temple .bar { display: flex; justify-content: space-between; gap: 10px; }
+.temple-main { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; overflow-y: auto; animation: temple-in 1.6s ease; }
+.temple-img { max-width: 100%; max-height: 58vh; object-fit: contain; border-radius: 14px; }
+.temple-img.monk { max-height: 38vh; }
+.temple-line { font-family: var(--serif); font-size: 1.15rem; letter-spacing: .12em; margin: 16px 0 0; color: var(--muted); }
+.temple-end { max-width: 460px; animation: temple-in 1.2s ease; }
+.temple-bow { font-family: var(--serif); font-size: 1.4rem; letter-spacing: .15em; margin: 0 0 18px; }
+.temple-four { font-family: var(--serif); color: var(--accent); letter-spacing: .08em; margin: 22px 0 0; }
+.temple-end .cover-src { text-align: center; }
+@keyframes temple-in { from { opacity: 0; } to { opacity: 1; } }
+.cover-temple, .home-temple { display: block; box-sizing: border-box; text-align: center; text-decoration: none; color: var(--ink); }
+.cover-temple { margin: 0 0 12px; }
+.home-temple { margin-top: 12px; }
