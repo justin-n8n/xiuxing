@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.11.0';
+const APP_VERSION = '0.11.1';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -1756,8 +1756,8 @@ async function renderDiary(action, id) {
   const cp = await todayPic('calli');
   view.innerHTML = `
     ${cp ? `<figure class="calli"><img src="${cp.url}" alt="${esc(cp.title)}"><figcaption class="pic-cap">${picCaption(cp)}</figcaption></figure>` : ''}
-    <button class="btn primary big" onclick="location.hash='diary/new'">＋ 寫日記</button>
-    <p class="small muted">寫日記時可以按 🎤 用說的：錄音＋轉成文字。</p>
+    <a class="btn primary big" href="https://justin-n8n.github.io/diary/" style="display:block;text-align:center;text-decoration:none">✍️ 到「阿輝的心情日誌」寫日記</a>
+    <p class="small muted">日記搬到心情日誌了（47）。下面是這裡的舊日記，都還留著。</p>
     ${list.length ? Object.entries(groups).map(([k, rs]) => `
       <div class="day-head">${fmtDay(k)}・${rs.length} 篇${settings.startDate && k < settings.startDate ? '（測試期間）' : ''}</div>
       ${rs.map(r => `<div class="card">
