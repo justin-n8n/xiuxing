@@ -1,13 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="44 34 152 180" role="img" aria-label="可愛版阿輝穿海青坐在蒲團上，合掌抬頭看著佛菩薩">
-  <!-- 可愛版阿輝（v0.12.1，小輝繪）：平頭短髮、圓臉、無框長方眼鏡、黑色海青＋縵衣、合掌，頭往左上抬，看著左邊的佛菩薩；可愛又莊嚴：眼神沉靜、含蓄微笑、動作放慢 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="44 34 152 180" role="img" aria-label="可愛版阿輝穿海青搭縵衣坐在蒲團上，側身朝左上方的佛菩薩雙手合十">
+  <!-- 可愛版阿輝（v0.12.3，小輝繪）：平頭短髮、圓臉、無框長方眼鏡、黑色海青＋縵衣；四分之三側身朝左上方的佛菩薩，雙手合十；可愛又莊嚴：眼神沉靜、含蓄微笑、動作慢 -->
   <style>
     .breathe { animation: breathe 8s ease-in-out infinite; transform-origin: 120px 196px; }
     @keyframes breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.012, 1.025); } }
-    .look { animation: look 12s ease-in-out infinite; transform-origin: 120px 108px; }
-    @keyframes look { 0%, 100% { transform: rotate(-9deg); } 50% { transform: rotate(-7deg); } }
-    .glint { animation: glint 7s ease-in-out infinite; }
-    @keyframes glint { 0%, 80%, 100% { opacity: 0; } 88% { opacity: .9; } }
-    @media (prefers-reduced-motion: reduce) { .breathe, .look, .glint { animation: none; } .look { transform: rotate(-8deg); } }
+    .look { animation: look 12s ease-in-out infinite; transform-origin: 116px 112px; }
+    @keyframes look { 0%, 100% { transform: rotate(5deg); } 50% { transform: rotate(7deg); } }
+    @media (prefers-reduced-motion: reduce) { .breathe, .look { animation: none; } .look { transform: rotate(6deg); } }
   </style>
   <!-- 蒲團 -->
   <ellipse cx="120" cy="197" rx="70" ry="15" fill="#8a4b3c"/>
@@ -16,60 +14,64 @@
   <g class="breathe">
     <!-- 盤腿 -->
     <ellipse cx="120" cy="179" rx="62" ry="17" fill="#26221f"/>
-    <ellipse cx="95" cy="177" rx="21" ry="8" fill="#35302c"/>
+    <ellipse cx="93" cy="177" rx="21" ry="8" fill="#35302c"/>
     <ellipse cx="145" cy="177" rx="21" ry="8" fill="#35302c"/>
-    <!-- 海青（身體） -->
-    <path d="M74 178 Q76 122 120 112 Q164 122 166 178 Z" fill="#2f2a27"/>
-    <!-- 交領：脖子露一點，黑色層層的領口 -->
-    <path d="M109 112 L120 129 L131 112 Z" fill="#f0d2b6"/>
-    <path d="M104 113 L120 138 L136 113" fill="none" stroke="#4a443f" stroke-width="6" stroke-linejoin="round"/>
-    <path d="M104 113 L120 138 L136 113" fill="none" stroke="#1c1917" stroke-width="1.6" stroke-linejoin="round"/>
-    <path d="M108 113 L120 132 L132 113" fill="none" stroke="#1c1917" stroke-width="1.1" stroke-linejoin="round"/>
-    <!-- 寬袖子往中間收到合掌 -->
-    <path d="M80 130 Q84 160 110 158 Q116 150 112 140 Q98 136 90 124 Z" fill="#3a3430"/>
-    <path d="M160 130 Q156 160 130 158 Q124 150 128 140 Q142 136 150 124 Z" fill="#3a3430"/>
-    <path d="M86 140 Q96 154 110 156" fill="none" stroke="#221e1b" stroke-width="1.6" stroke-linecap="round"/>
-    <path d="M154 140 Q144 154 130 156" fill="none" stroke="#221e1b" stroke-width="1.6" stroke-linecap="round"/>
+    <!-- 海青（身體，微微轉向左） -->
+    <path d="M72 178 Q72 124 114 112 Q162 120 166 178 Z" fill="#2f2a27"/>
+    <!-- 交領：脖子露一點，黑色層層的領口（往左偏） -->
+    <path d="M103 112 L113 128 L124 112 Z" fill="#f0d2b6"/>
+    <path d="M98 113 L113 138 L129 113" fill="none" stroke="#4a443f" stroke-width="6" stroke-linejoin="round"/>
+    <path d="M98 113 L113 138 L129 113" fill="none" stroke="#1c1917" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M102 113 L113 132 L125 113" fill="none" stroke="#1c1917" stroke-width="1.1" stroke-linejoin="round"/>
+    <!-- 遠的手臂（左邊，被身體擋住一些） -->
+    <path d="M78 134 Q80 156 96 158 Q101 150 99 141 Q90 138 86 126 Z" fill="#3a3430"/>
     <!-- 縵衣：從右肩斜到左下，白色縫線、藍色條紋布塊 -->
     <path d="M125.5 113.5 L134.5 121.5 L84.5 177 L75.5 169 Z" fill="#1f1b19" stroke="#3d3833" stroke-width=".8"/>
     <line x1="103" y1="138.5" x2="112" y2="146.5" stroke="#d6d6d6" stroke-width=".8" stroke-dasharray="1.5 1.2"/>
-    <line x1="95.5" y1="146.8" x2="104.5" y2="154.8" stroke="#d6d6d6" stroke-width=".8" stroke-dasharray="1.5 1.2"/>
     <path d="M98.5 161.4 L89.5 153.4 L78 166.2 L87 174.2 Z" fill="#1b2560" stroke="#d6d6d6" stroke-width=".7" stroke-dasharray="1.5 1.2"/>
     <g stroke="#4a6ad8" stroke-width=".8"><line x1="91.8" y1="155.4" x2="80.3" y2="168.2"/><line x1="92.9" y1="156.4" x2="81.4" y2="169.2"/><line x1="94" y1="157.4" x2="82.5" y2="170.2"/><line x1="95.1" y1="158.4" x2="83.6" y2="171.2"/><line x1="96.2" y1="159.4" x2="84.7" y2="172.2"/></g>
-    <!-- 合掌 -->
-    <path d="M120 118 Q110 134 112 154 L128 154 Q130 134 120 118 Z" fill="#f2d6bd"/>
-    <line x1="120" y1="121" x2="120" y2="153" stroke="#dfb999" stroke-width="1.4" stroke-linecap="round"/>
-    <!-- 頭（往左上抬） -->
+    <!-- 近的手臂（右邊）：寬袖從右肩繞到胸前合十 -->
+    <path d="M160 130 Q156 160 116 160 Q106 154 110 144 Q132 140 148 124 Z" fill="#3a3430"/>
+    <path d="M154 140 Q146 156 118 158" fill="none" stroke="#221e1b" stroke-width="1.6" stroke-linecap="round"/>
+    <!-- 雙手合十：側面看，指尖朝左上方的佛菩薩 -->
+    <g transform="rotate(-18 104 152)">
+      <path d="M104 114 Q96 130 98 152 L110 152 Q112 130 104 114 Z" fill="#f2d6bd"/>
+      <path d="M104 117 Q101 132 102 151" fill="none" stroke="#dfb999" stroke-width="1.3" stroke-linecap="round"/>
+      <path d="M99 140 Q104 138 109 140" fill="none" stroke="#dfb999" stroke-width="1" stroke-linecap="round" opacity=".8"/>
+    </g>
+    <!-- 頭（四分之三側臉，朝左上） -->
     <g class="look">
-      <ellipse cx="84" cy="86" rx="7" ry="9" fill="#efcdb0"/>
-      <ellipse cx="156" cy="86" rx="7" ry="9" fill="#efcdb0"/>
-      <ellipse cx="120" cy="83" rx="37" ry="34" fill="#f4dcc3"/>
-      <!-- 圓圓的臉頰 -->
-      <ellipse cx="96" cy="100" rx="12" ry="9" fill="#f4dcc3"/>
-      <ellipse cx="144" cy="100" rx="12" ry="9" fill="#f4dcc3"/>
-      <!-- 平頭：往上豎的短髮，髮線平 -->
-      <path d="M84 84 L84 64 Q84 49 97 44.5 L99.5 42 L102 43.6 L104.5 41.3 L107 42.9 L109.5 40.8 L112 42.5 L114.5 40.5 L117 42.2 L119.5 40.3 L122 42 L124.5 40.4 L127 42.3 L129.5 40.7 L132 42.6 L134.5 41 L137 43 L139.5 41.8 L142 44.2 Q155 49 156 64 L156 84 Q154 72 150 66 Q136 62 120 62 Q104 62 90 66 Q86 72 84 84 Z" fill="#26221f"/>
-      <g stroke="#4a433d" stroke-width="1.3" stroke-linecap="round" opacity=".7"><line x1="100" y1="52" x2="101" y2="48"/><line x1="108" y1="50" x2="108.5" y2="46"/><line x1="116" y1="49" x2="116" y2="45"/><line x1="124" y1="49" x2="124" y2="45"/><line x1="132" y1="50" x2="131.5" y2="46"/><line x1="140" y1="52" x2="139" y2="48"/></g>
+      <ellipse cx="117" cy="83" rx="35" ry="34" fill="#f4dcc3"/>
+      <!-- 圓圓的臉頰：遠的小、近的大 -->
+      <ellipse cx="92" cy="99" rx="10" ry="9" fill="#f4dcc3"/>
+      <ellipse cx="137" cy="101" rx="12" ry="9" fill="#f4dcc3"/>
+      <!-- 平頭：往上豎的短髮，看得到後腦多一點 -->
+      <path d="M82 82 L82 64 Q82 49 95 44.5 L97.5 42 L100 43.6 L102.5 41.3 L105 42.9 L107.5 40.8 L110 42.5 L112.5 40.5 L115 42.2 L117.5 40.3 L120 42 L122.5 40.4 L125 42.3 L127.5 40.7 L130 42.6 L132.5 41 L135 43 L137.5 41.8 L140 43.6 L142.5 43 L145 46 Q156 51 156 66 L156 92 Q152 82 147 76 Q142 66 132 63 Q116 60 99 63 Q87 67 82 82 Z" fill="#26221f"/>
+      <g stroke="#4a433d" stroke-width="1.3" stroke-linecap="round" opacity=".7"><line x1="98" y1="52" x2="99" y2="48"/><line x1="106" y1="50" x2="106.5" y2="46"/><line x1="114" y1="49" x2="114" y2="45"/><line x1="122" y1="49" x2="122" y2="45"/><line x1="130" y1="50" x2="129.5" y2="46"/><line x1="138" y1="52" x2="137" y2="48"/><line x1="146" y1="56" x2="144.5" y2="52"/></g>
+      <!-- 右耳（只看得到這一隻） -->
+      <ellipse cx="151" cy="88" rx="7" ry="9" fill="#efcdb0"/>
+      <path d="M150 84 Q154 88 150 92" fill="none" stroke="#dfb999" stroke-width="1.2" stroke-linecap="round"/>
       <!-- 眉毛 -->
-      <path d="M98 69.5 Q104.5 67.5 111 69" fill="none" stroke="#3b302a" stroke-width="2" stroke-linecap="round"/>
-      <path d="M129 69 Q135.5 67.5 142 69.5" fill="none" stroke="#3b302a" stroke-width="2" stroke-linecap="round"/>
-      <!-- 眼睛：往左上看，眼皮線讓眼神沉靜 -->
-      <circle cx="101.5" cy="79.5" r="3.2" fill="#3b2a20"/>
-      <circle cx="129" cy="79.5" r="3.2" fill="#3b2a20"/>
-      <circle cx="100.6" cy="78.4" r="1" fill="#fff"/>
-      <circle cx="128.1" cy="78.4" r="1" fill="#fff"/>
-      <path d="M96.5 78.2 Q101.5 75.2 106.5 78.2" fill="none" stroke="#3b2a20" stroke-width="1.7" stroke-linecap="round"/>
-      <path d="M124 78.2 Q129 75.2 134 78.2" fill="none" stroke="#3b2a20" stroke-width="1.7" stroke-linecap="round"/>
-      <!-- 無框長方眼鏡：淡淡的鏡片、細銀鼻樑與鏡腳 -->
-      <rect x="93" y="75" width="23" height="13" rx="4" fill="#ffffff" fill-opacity=".2" stroke="#b9b9b9" stroke-width="1.1"/>
-      <rect x="124" y="75" width="23" height="13" rx="4" fill="#ffffff" fill-opacity=".2" stroke="#b9b9b9" stroke-width="1.1"/>
-      <path d="M116 79 Q120 76 124 79" fill="none" stroke="#9a9a9a" stroke-width="1.8" stroke-linecap="round"/>
-      <line x1="93" y1="78" x2="84" y2="76" stroke="#a5a5a5" stroke-width="2.2" stroke-linecap="round"/>
-      <line x1="147" y1="78" x2="157" y2="76" stroke="#a5a5a5" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M87 69.5 Q92 67.8 97.5 69" fill="none" stroke="#3b302a" stroke-width="1.9" stroke-linecap="round"/>
+      <path d="M109 69 Q115.5 67.3 122 69" fill="none" stroke="#3b302a" stroke-width="2" stroke-linecap="round"/>
+      <!-- 眼睛：往左上看，眼皮線讓眼神沉靜；遠的眼睛小一點 -->
+      <circle cx="93.5" cy="79.5" r="2.8" fill="#3b2a20"/>
+      <circle cx="114.5" cy="79.5" r="3.2" fill="#3b2a20"/>
+      <circle cx="92.8" cy="78.5" r=".9" fill="#fff"/>
+      <circle cx="113.6" cy="78.4" r="1" fill="#fff"/>
+      <path d="M89.5 78.2 Q93.5 75.6 97.5 78.2" fill="none" stroke="#3b2a20" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M110 78.2 Q114.8 75.2 119.5 78.2" fill="none" stroke="#3b2a20" stroke-width="1.7" stroke-linecap="round"/>
+      <!-- 無框長方眼鏡（轉向左：遠的鏡片窄、近的寬，鏡腳往右耳） -->
+      <rect x="86" y="75" width="15" height="13" rx="3.5" fill="#ffffff" fill-opacity=".2" stroke="#b9b9b9" stroke-width="1.1"/>
+      <rect x="106" y="75" width="22" height="13" rx="4" fill="#ffffff" fill-opacity=".2" stroke="#b9b9b9" stroke-width="1.1"/>
+      <path d="M101 79 Q103.5 77 106 79" fill="none" stroke="#9a9a9a" stroke-width="1.8" stroke-linecap="round"/>
+      <line x1="128" y1="78" x2="148" y2="82" stroke="#a5a5a5" stroke-width="2.2" stroke-linecap="round"/>
+      <!-- 小鼻子 -->
+      <path d="M103.5 89 Q101 93 104 95" fill="none" stroke="#dcb293" stroke-width="1.4" stroke-linecap="round"/>
       <!-- 含蓄的微笑、淡淡腮紅 -->
-      <path d="M113.5 102.5 Q118.5 105.5 123.5 102.5" fill="none" stroke="#b5654f" stroke-width="1.8" stroke-linecap="round"/>
-      <ellipse cx="96" cy="99" rx="7" ry="4" fill="#f2a99a" opacity=".32"/>
-      <ellipse cx="144" cy="99" rx="7" ry="4" fill="#f2a99a" opacity=".32"/>
+      <path d="M100 102 Q104.5 105 109 102" fill="none" stroke="#b5654f" stroke-width="1.8" stroke-linecap="round"/>
+      <ellipse cx="90" cy="98" rx="5" ry="3.5" fill="#f2a99a" opacity=".3"/>
+      <ellipse cx="128" cy="99" rx="7" ry="4" fill="#f2a99a" opacity=".32"/>
     </g>
   </g>
 </svg>
