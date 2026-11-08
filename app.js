@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.12.3';
+const APP_VERSION = '0.12.4';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -1473,6 +1473,8 @@ function renderSitting(r) {
   if (r.buddhaBg !== false) todayPic('buddha').then(p => { // 舊的打坐紀錄沒有這一項：當成開
     const s = $('.sitting'); if (!p || !s) return;
     const bg = document.createElement('div'); bg.className = 'sit-bg'; bg.style.backgroundImage = `url("${p.url}")`; s.prepend(bg);
+    // v0.12.4：阿輝在佛像下方打坐（Justin 提供的插畫去背），放在計時數字下面
+    if (!s.querySelector('.sit-ahui')) $('#clock')?.insertAdjacentHTML('afterend', `<img class="sit-ahui" src="ahui-sit.webp?v=${APP_VERSION}" alt="阿輝在佛菩薩前打坐">`);
   });
   const arm = async () => { // 重新打開 App 時：瀏覽器要點一下才肯出聲
     if (r.water && !waterSrc) await startWater(r.waterVol);

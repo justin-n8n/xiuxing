@@ -263,6 +263,10 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 .calli .pic-cap { margin-top: 4px; }
 .sit-bg { position: absolute; inset: 0; background: center 10% / contain no-repeat; opacity: .38; filter: saturate(.75); pointer-events: none; -webkit-mask-image: linear-gradient(#000 55%, transparent 80%); mask-image: linear-gradient(#000 55%, transparent 80%); }
 .sitting > :not(.sit-bg) { position: relative; }
+/* v0.12.4：阿輝在佛像下方打坐；黑底上加一圈很淡的暖光，海青才看得出輪廓 */
+.sit-ahui { width: clamp(80px, 24vw, 120px); height: auto; margin: -10px 0; filter: drop-shadow(0 0 14px rgba(247, 238, 223, .22)); pointer-events: none; }
+/* 佛像要大、人物要小（11/8 Justin）。平板（直、橫）：佛像背景佔上方 50%，阿輝才會在佛像下方、不擋佛像；手機維持原樣 */
+@media (min-width: 600px) { .sit-bg { bottom: auto; height: 50%; background-position: center top; } }
 /* v0.11.0：整套功課每一項上方的佛像小圖、佛號計數背景 */
 .set-pic { text-align: center; margin: 6px 0 2px; }
 .set-pic img { max-height: 150px; max-width: 70%; object-fit: contain; border-radius: 10px; }
@@ -316,10 +320,10 @@ a.link-btn { text-decoration: none; }
 .temple-img.monk { max-height: 38vh; background: radial-gradient(closest-side, rgba(247, 238, 223, .55), rgba(247, 238, 223, 0)); border-radius: 0; }
 /* v0.12.2：阿輝在照片下方右邊，完全不蓋佛像，抬頭往左上看；圖說放同一排左邊。v0.12.3 起改用 Justin 給的站姿插畫（瘦高，寬度縮小） */
 .temple-figure { display: inline-flex; flex-direction: column; max-width: 100%; }
-.temple-figure .temple-img { display: block; max-height: 44vh; }
+.temple-figure .temple-img { display: block; max-height: 50vh; }
 .temple-seat { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: 2px; }
 .temple-seat .pic-cap { flex: 1; min-width: 0; text-align: left; margin: 0 0 12px; }
-.temple-ahui { flex: none; width: clamp(70px, 20vw, 100px); height: auto; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .3)); pointer-events: none; }
+.temple-ahui { flex: none; width: clamp(56px, 15vw, 76px); height: auto; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .3)); pointer-events: none; }
 .temple-line { font-family: var(--serif); font-size: 1.15rem; letter-spacing: .12em; margin: 16px 0 0; color: var(--muted); }
 .temple-end { max-width: 460px; animation: temple-in 1.2s ease; }
 .temple-bow { font-family: var(--serif); font-size: 1.4rem; letter-spacing: .15em; margin: 0 0 18px; }

@@ -9,7 +9,7 @@
 - 流水聲 `assets/river.ogg`：Wikimedia Commons〈[Shallow small river with stony riverbed.ogg](https://commons.wikimedia.org/wiki/File:Shallow_small_river_with_stony_riverbed.ogg)〉，作者 stephan，公有領域。
 - 抄經字型 `assets/copyfont.woff2`：[霞鶩文楷 TC](https://github.com/lxgw/LxgwWenkaiTC) v1.530 的子集（只含抄經用到的字），SIL Open Font License 1.1，授權全文見 `assets/copyfont-OFL.txt`。
 - 每日法語 `quotes.js`：《聖嚴法師108自在語》（財團法人聖嚴教育基金會結緣出版），文字由使用者提供，僅供個人修行使用。
-- 禪坐圖 `monk.svg`：Claude Code 繪製。小寺頁的阿輝 `ahui.webp`：使用者本人提供的插畫（去背縮小）；`ahui.svg` 是 Claude Code 畫的舊稿，已不使用。
+- 禪坐圖 `monk.svg`：Claude Code 繪製。小寺頁的阿輝 `ahui.webp`、打坐畫面的阿輝 `ahui-sit.webp`：使用者本人提供的插畫（去背縮小）；`ahui.svg` 是 Claude Code 畫的舊稿，已不使用。
 - 佛像照片、聖嚴法師墨寶：法鼓山版權所有，**不在本 repo**；使用者把圖片放在自己的雲端硬碟，App 透過自己的 Apps Script 下載、只在自己的裝置顯示並註明出處。「心靈處方籤」連到法鼓山官方網站 https://bless.ddm.org.tw/index_tw.php 。
 - 引磬聲：程式即時合成。
 - 念珠：程式用 Canvas 繪製。
