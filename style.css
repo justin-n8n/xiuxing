@@ -314,10 +314,12 @@ a.link-btn { text-decoration: none; }
 .temple-main { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; overflow-y: auto; animation: temple-in 1.6s ease; }
 .temple-img { max-width: 100%; max-height: 58vh; object-fit: contain; border-radius: 14px; }
 .temple-img.monk { max-height: 38vh; background: radial-gradient(closest-side, rgba(247, 238, 223, .55), rgba(247, 238, 223, 0)); border-radius: 0; }
-/* v0.12.1：可愛版阿輝坐在佛菩薩右下角，抬頭看著佛菩薩 */
-.temple-figure { position: relative; display: inline-block; max-width: 100%; margin-bottom: 14px; }
-.temple-figure .temple-img { display: block; max-height: 52vh; }
-.temple-ahui { position: absolute; right: 0; bottom: -12px; width: clamp(104px, 36%, 170px); height: auto; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .3)); pointer-events: none; }
+/* v0.12.2：阿輝坐在照片下方右邊，完全不蓋佛像，抬頭往左上看；圖說放同一排左邊 */
+.temple-figure { display: inline-flex; flex-direction: column; max-width: 100%; }
+.temple-figure .temple-img { display: block; max-height: 44vh; }
+.temple-seat { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: 2px; }
+.temple-seat .pic-cap { flex: 1; min-width: 0; text-align: left; margin: 0 0 12px; }
+.temple-ahui { flex: none; width: clamp(92px, 28vw, 140px); height: auto; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .3)); pointer-events: none; }
 .temple-line { font-family: var(--serif); font-size: 1.15rem; letter-spacing: .12em; margin: 16px 0 0; color: var(--muted); }
 .temple-end { max-width: 460px; animation: temple-in 1.2s ease; }
 .temple-bow { font-family: var(--serif); font-size: 1.4rem; letter-spacing: .15em; margin: 0 0 18px; }

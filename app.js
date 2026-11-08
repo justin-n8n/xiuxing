@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.12.1';
+const APP_VERSION = '0.12.2';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -839,7 +839,7 @@ async function renderTemple() {
         ${sitting ? '' : `<button class="btn" data-a="water" id="templeWater" aria-pressed="${p.water}">${waterLabel()}</button>`}
       </div>
       <div class="temple-main" id="templeMain">
-        ${pic ? `<div class="temple-figure"><img class="temple-img" src="${pic.url}" alt="${esc(pic.title)}"><img class="temple-ahui" src="ahui.svg" alt="阿輝坐在佛菩薩身旁，抬頭看著學習"></div><div class="pic-cap">${picCaption(pic)}</div>` : '<img class="temple-img monk" src="ahui.svg" alt="阿輝坐在蒲團上合掌">'}
+        ${pic ? `<div class="temple-figure"><img class="temple-img" src="${pic.url}" alt="${esc(pic.title)}"><div class="temple-seat"><div class="pic-cap">${picCaption(pic)}</div><img class="temple-ahui" src="ahui.svg" alt="阿輝坐在佛菩薩前，抬頭看著學習"></div></div>` : '<img class="temple-img monk" src="ahui.svg" alt="阿輝坐在蒲團上合掌">'}
         <p class="temple-line" id="templeLine">不用做什麼，待著就好。</p>
       </div>
       <button class="btn primary big" data-a="bow" id="templeBtn">🙏 合掌問訊</button>
