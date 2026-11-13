@@ -1,7 +1,7 @@
 /* 修行紀錄 App（34.修行紀錄App）：念經與功課、佛號、打坐（流水聲）、日記（語音）、抄經（描紅）、首頁、迴向、離線、雲端同步 */
 'use strict';
 
-const APP_VERSION = '0.12.4';
+const APP_VERSION = '0.12.5';
 
 /* ---------- 診斷模式（10/21：手機設定頁點不動）：網址加 ?diag 才會出現，畫面上方顯示手指點到什麼、有沒有錯誤 ---------- */
 (function diag() {
@@ -805,8 +805,8 @@ async function renderCover() {
   const blp = bl ? { ...bl, url: await picURL(bl) } : null;
   view.innerHTML = `
     <div class="cover">
-      ${bp ? `<div class="cover-figure"><img class="cover-buddha" src="${bp.url}" alt="${esc(bp.title)}"><img class="cover-art side" src="monk.svg" alt="小沙彌在佛菩薩身旁禪坐"></div>
-      <div class="pic-cap">${picCaption(bp)}</div>` : '<img class="cover-art" src="monk.svg" alt="小沙彌在蒲團上禪坐">'}
+      ${bp ? `<div class="cover-figure"><img class="cover-buddha" src="${bp.url}" alt="${esc(bp.title)}"><img class="cover-art side ahui" src="ahui-sit.webp?v=${APP_VERSION}" alt="阿輝在佛菩薩身旁打坐"></div>
+      <div class="pic-cap">${picCaption(bp)}</div>` : `<img class="cover-art ahui" src="ahui-sit.webp?v=${APP_VERSION}" alt="阿輝在蒲團上打坐">`}
       <h1 class="cover-name">${esc(settings.myName || '我')}的修行日誌</h1>
       <div class="cover-date">${fmtDay(todayKey())}・${st.streak ? `連續 ${st.streak} 天・` : ''}累積 ${st.total} 天${st.todayDone ? '・今天已修行 ✓' : ''}</div>
       <a class="btn big cover-temple" href="#temple">🌿 今天累了？來小寺待一分鐘</a>

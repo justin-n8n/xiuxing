@@ -249,7 +249,9 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 /* 佛像與圖片（v0.10.0）：小沙彌坐在佛菩薩身旁（Q3） */
 .cover-figure { position: relative; margin: 4px 0 0; padding-bottom: 18px; }
 .cover-buddha { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 16px; box-shadow: var(--shadow); }
+.cover-art.ahui { width: min(46vw, 190px); } /* v0.12.5：封面改阿輝打坐（直式圖，比原本小沙彌窄） */
 .cover-art.side { position: absolute; right: -6px; bottom: 0; width: 34%; margin: 0; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .25)); }
+.cover-art.side.ahui { width: 26%; }
 .pic-cap { color: var(--muted); font-size: .72rem; margin: 2px 0 8px; text-align: center; }
 .cover-card.bless { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--ink); }
 .cover-card.bless img { width: 64px; height: 84px; object-fit: contain; flex: none; }
