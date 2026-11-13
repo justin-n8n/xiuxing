@@ -251,7 +251,11 @@ textarea { min-height: 140px; resize: vertical; line-height: 1.7; }
 .cover-buddha { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 16px; box-shadow: var(--shadow); }
 .cover-art.ahui { width: min(46vw, 190px); } /* v0.12.5：封面改阿輝打坐（直式圖，比原本小沙彌窄） */
 .cover-art.side { position: absolute; right: -6px; bottom: 0; width: 34%; margin: 0; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .25)); }
-.cover-art.side.ahui { width: 26%; }
+/* v0.12.6：阿輝改坐照片下方右邊，不擋佛像（同小寺頁 v0.12.2 的做法） */
+.cover-figure:has(.cover-seat) { padding-bottom: 0; }
+.cover-seat { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: 2px; }
+.cover-seat .pic-cap { flex: 1; min-width: 0; text-align: left; margin: 0 0 12px; }
+.cover-ahui { flex: none; width: clamp(64px, 19vw, 92px); height: auto; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .25)); pointer-events: none; }
 .pic-cap { color: var(--muted); font-size: .72rem; margin: 2px 0 8px; text-align: center; }
 .cover-card.bless { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--ink); }
 .cover-card.bless img { width: 64px; height: 84px; object-fit: contain; flex: none; }

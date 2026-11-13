@@ -3,7 +3,7 @@
    v0.6.3：一律先跟網站確認有沒有新版（cache: 'no-cache'），不再沿用手機瀏覽器留著的舊檔（GitHub Pages 會讓舊檔留 10 分鐘）。
    v0.12.3：index.html 引用的檔案加上 ?v=版號，程式和樣式一起換新，不會一新一舊（快取比對時忽略 ?v）。
    v0.9.0：網路很慢時（有訊號但很差）3 秒還沒回來就先用快取打開，網路的結果回來再更新快取（獨立檢查 #18）。 */
-const VERSION = 'xiuxing-v0.12.5';
+const VERSION = 'xiuxing-v0.12.6';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'sutras.js', 'quotes.js', 'monk.svg', 'ahui.webp', 'ahui-sit.webp', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'assets/river.ogg', 'assets/copyfont.woff2'];
 
 self.addEventListener('install', e => {
